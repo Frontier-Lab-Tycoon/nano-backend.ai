@@ -8,7 +8,7 @@ import (
 )
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
-	resp := common.OkResponse("healthy", "")
+	resp := common.OKResponse("healthy", "")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

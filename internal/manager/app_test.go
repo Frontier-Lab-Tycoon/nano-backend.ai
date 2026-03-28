@@ -20,7 +20,7 @@ func TestHealthReturns200OK(t *testing.T) {
 		t.Errorf("got status %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	var resp common.ApiResponse
+	var resp common.APIResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}

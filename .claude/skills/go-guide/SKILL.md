@@ -7,7 +7,10 @@ user-invocable: true
 # Go Coding Guide
 
 Condensed conventions for all Go code in this project.
-Reference: [Effective Go](https://go.dev/doc/effective_go), [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments).
+
+**References:**
+- [Effective Go](https://go.dev/doc/effective_go), [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments)
+- [GO_CODING_GUIDELINES.md](./GO_CODING_GUIDELINES.md) — production codebase conventions (interface design, DI, composition, package structure). Read this file for detailed patterns beyond the condensed guide below.
 
 ## Error Handling
 

@@ -8,7 +8,7 @@ Skills provide focused guides for AI agents. Invoke with `/skill-name`.
 
 | Skill | Purpose | Use When |
 |-------|---------|----------|
-| `/go-guide` | Go coding conventions, error handling, type design, concurrency | Writing or reviewing Go code |
+| `/go-guide` | Go coding conventions, error handling, type design, concurrency, production patterns | Writing or reviewing Go code |
 | `/tdd-guide` | TDD workflow (Red → Green → Refactor) | Implementing features or fixing bugs |
 | `/submit` | Quality checks, learning notes, commit, PR creation | Ready to submit changes |
 

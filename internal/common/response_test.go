@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-func TestNewApiResponseSetsAllFields(t *testing.T) {
-	resp := NewApiResponse("healthy", "service is running", "proceed with requests")
+func TestNewAPIResponseSetsAllFields(t *testing.T) {
+	resp := NewAPIResponse("healthy", "service is running", "proceed with requests")
 
 	if resp.Status != "healthy" {
-		t.Errorf("got status %q, want %q", resp.Status, "healthy")
+		t.Errorf("got status %q, want %q", resp.Status, APIStatus("healthy"))
 	}
 	if resp.Reason != "service is running" {
 		t.Errorf("got reason %q, want %q", resp.Reason, "service is running")
@@ -19,24 +19,24 @@ func TestNewApiResponseSetsAllFields(t *testing.T) {
 	}
 }
 
-func TestOkResponseSetsStatusToOk(t *testing.T) {
-	resp := OkResponse("done", "continue")
+func TestOKResponseSetsStatusToOK(t *testing.T) {
+	resp := OKResponse("done", "continue")
 
-	if resp.Status != "ok" {
-		t.Errorf("got status %q, want %q", resp.Status, "ok")
+	if resp.Status != StatusOK {
+		t.Errorf("got status %q, want %q", resp.Status, StatusOK)
 	}
 }
 
 func TestErrorResponseSetsStatusToError(t *testing.T) {
 	resp := ErrorResponse("failed", "retry later")
 
-	if resp.Status != "error" {
-		t.Errorf("got status %q, want %q", resp.Status, "error")
+	if resp.Status != StatusError {
+		t.Errorf("got status %q, want %q", resp.Status, StatusError)
 	}
 }
 
-func TestApiResponseSerializesToJSON(t *testing.T) {
-	resp := NewApiResponse("healthy", "all good", "send requests")
+func TestAPIResponseSerializesToJSON(t *testing.T) {
+	resp := NewAPIResponse(StatusOK, "all good", "send requests")
 
 	data, err := json.Marshal(resp)
 	if err != nil {
@@ -48,8 +48,8 @@ func TestApiResponseSerializesToJSON(t *testing.T) {
 		t.Fatalf("unexpected unmarshal error: %v", err)
 	}
 
-	if m["status"] != "healthy" {
-		t.Errorf("got status %q, want %q", m["status"], "healthy")
+	if m["status"] != "ok" {
+		t.Errorf("got status %q, want %q", m["status"], "ok")
 	}
 	if m["reason"] != "all good" {
 		t.Errorf("got reason %q, want %q", m["reason"], "all good")
@@ -59,16 +59,16 @@ func TestApiResponseSerializesToJSON(t *testing.T) {
 	}
 }
 
-func TestApiResponseDeserializesFromJSON(t *testing.T) {
+func TestAPIResponseDeserializesFromJSON(t *testing.T) {
 	input := `{"status":"ok","reason":"done","next_action_hint":"proceed"}`
 
-	var resp ApiResponse
+	var resp APIResponse
 	if err := json.Unmarshal([]byte(input), &resp); err != nil {
 		t.Fatalf("unexpected unmarshal error: %v", err)
 	}
 
-	if resp.Status != "ok" {
-		t.Errorf("got status %q, want %q", resp.Status, "ok")
+	if resp.Status != StatusOK {
+		t.Errorf("got status %q, want %q", resp.Status, StatusOK)
 	}
 	if resp.Reason != "done" {
 		t.Errorf("got reason %q, want %q", resp.Reason, "done")
