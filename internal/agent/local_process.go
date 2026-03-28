@@ -107,10 +107,9 @@ func (lp *LocalProcess) Destroy(_ context.Context, id common.KernelID) error {
 }
 
 // Status returns the current status of the process identified by id.
-// Stub — full implementation in a separate Story (#44).
 func (lp *LocalProcess) Status(_ context.Context, id common.KernelID) (common.KernelStatus, error) {
 	lp.mu.Lock()
-	_, ok := lp.processes[id]
+	entry, ok := lp.processes[id]
 	lp.mu.Unlock()
 
 	if !ok {
@@ -120,5 +119,12 @@ func (lp *LocalProcess) Status(_ context.Context, id common.KernelID) (common.Ke
 			Err: common.ErrKernelNotFound,
 		}
 	}
-	return common.Running(), nil
+
+	select {
+	case <-entry.done:
+		// Process has exited; ProcessState is populated by cmd.Wait().
+		return common.Exited(entry.cmd.ProcessState.ExitCode()), nil
+	default:
+		return common.Running(), nil
+	}
 }
