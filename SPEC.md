@@ -167,6 +167,11 @@ type Runtime interface {
     StreamLogs(ctx context.Context, handle ContainerHandle, opts LogOptions) (io.ReadCloser, error)
 }
 
+type ContainerHandle struct {
+    ID   string // Docker container ID
+    Node string // empty in single-node MVP; daemon endpoint in Phase 3 multi-node
+}
+
 type ExecutionPlan struct {
     RunID      string
     ImageRef   string
