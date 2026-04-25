@@ -66,6 +66,35 @@ idempotency_key: mergeowl-exp-42   # optional, prevents duplicate submissions
 | `lineage` | no | Traceability metadata (git sha, issue/PR/thread). |
 | `idempotency_key` | no | Client-supplied key; duplicate returns existing run. |
 
+### 3.1 Dataset / Model Staging Contract
+
+Before a run enters `running`, the platform must resolve all assets during `preparing`.
+
+**Base model resolution**
+- `hf://<model_id>` or bare `<org>/<model>` → download via `huggingface_hub` into `HF_HOME` cache.
+- `local://<absolute_path>` → verify existence; mount read-only into container.
+- Cache hit: skip download, record `cache_hit=true` in run metadata.
+- Cache miss: download; if download fails, transition to `failed` with `failure_reason: model_download_failed`.
+
+**Dataset resolution**
+- `hf://<dataset_id>` or bare `<org>/<dataset>` → download via `datasets` library into local cache.
+- `local://<absolute_path>` → verify existence; mount read-only.
+- If any dataset fails to stage, transition to `failed` with `failure_reason: dataset_stage_failed`.
+
+**Environment**
+- `HF_HOME` is always set to a host directory bind-mounted into the container (e.g., `/cache/huggingface`).
+- The cache directory is shared across runs on the same node but namespaced by project if multi-tenant later.
+
+### 3.2 Idempotency Semantics
+
+If `idempotency_key` is provided:
+
+1. **Exact match**: If a run with the same key exists and the submitted spec is byte-for-byte identical, return the existing run immediately (HTTP 200 with existing `run_id`).
+2. **Conflict**: If a run with the same key exists but the spec differs, return HTTP 409 Conflict with the existing `run_id` so the agent can inspect the mismatch.
+3. **No key**: Normal submission; no deduplication.
+
+This prevents an agent that retries after a network blip from accidentally spawning duplicate training jobs.
+
 ## 4. State Machine
 
 Runs advance through the following states:
@@ -145,6 +174,46 @@ Every successful (or failed) run must write the following to its artifact direct
 
 **Rule:** if `spec.yaml` and `resolved_config.yaml` are missing, the run is considered incomplete.
 
+### 7.1 metrics.json Minimum Schema
+
+Every preset must produce a `metrics.json` with at minimum the following fields. Additional preset-specific fields are allowed but must not conflict with these keys.
+
+```json
+{
+  "train": {
+    "global_step": 1234,
+    "final_loss": 1.2345,
+    "runtime_sec": 3600,
+    "samples_per_sec": 12.5
+  },
+  "eval": {
+    "final_loss": 1.3456
+  },
+  "system": {
+    "max_gpu_mem_mb": 23000,
+    "gpu_name": "NVIDIA GeForce RTX 3090"
+  },
+  "outcome": {
+    "status": "succeeded",
+    "epochs_completed": 3
+  }
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `train.global_step` | yes | Total optimizer steps completed. |
+| `train.final_loss` | yes | Last recorded training loss. |
+| `train.runtime_sec` | yes | Wall-clock training time in seconds. |
+| `train.samples_per_sec` | no | Throughput for capacity planning. |
+| `eval.final_loss` | no | Present if eval dataset was provided. |
+| `system.max_gpu_mem_mb` | yes | Peak VRAM observed during training. |
+| `system.gpu_name` | no | GPU model for reproducibility notes. |
+| `outcome.status` | yes | `succeeded` or `failed`. |
+| `outcome.epochs_completed` | yes | How many epochs actually finished. |
+
+`eval` is optional but when present must follow the same shape. This lets agents compare runs that used eval against runs that did not without schema drift.
+
 ## 8. Preset Schema
 
 Presets define the trainer environment and the allowed override keys.
@@ -175,6 +244,27 @@ schema:
 ```
 
 Submitting an override key not in `allowed_overrides` returns a validation error.
+
+### 8.1 Preset Execution Contract
+
+A preset is not just a Docker image. It is a **behavioral contract** between the platform and the trainer container.
+
+**Inputs the platform guarantees**
+1. `resolved_config.yaml` mounted at `/workspace/resolved_config.yaml` (preset defaults + overrides merged).
+2. All `datasets` mounted or symlinked under `/workspace/data/`.
+3. Base model accessible at `/workspace/model/` (or via `HF_HOME` cache if using HF Hub inside the container).
+4. Output directory `/workspace/output/` writable; its contents become the artifact bundle.
+
+**Outputs the container must produce**
+1. `/workspace/output/spec.yaml` — copy of the submitted spec.
+2. `/workspace/output/resolved_config.yaml` — the actual config used for training.
+3. `/workspace/output/stdout.log` and `/workspace/output/stderr.log`.
+4. `/workspace/output/metrics.json` — at minimum `{"train_loss": [...], "eval_loss": [...], "epochs": N}`.
+5. `/workspace/output/report.md` — human-readable summary (training time, final loss, hardware used).
+6. `/workspace/output/adapter/` — if `outputs.save_adapter: true`.
+7. `/workspace/output/merged/` — if `outputs.save_merged: true`.
+
+If any required output is missing, the run transitions to `failed` with `failure_reason: trainer_error` and the platform captures whatever partial outputs exist.
 
 ## 9. Storage Driver
 
@@ -242,6 +332,19 @@ CREATE TABLE artifacts (
 ```
 
 JSON columns keep the schema stable during early iteration. Add typed columns only when a field needs indexing or strict constraints.
+
+### 11.1 Scheduler Rules
+
+MVP scheduling is intentionally trivial because the hardware is fixed (single node, 2× RTX 3090).
+
+- **Policy**: FIFO per GPU. No preemption, no bin-packing, no priority queues.
+- **Concurrency**: One run per GPU. Maximum two runs in `running` state simultaneously.
+- **GPU selection**: Assign the first free GPU (0 or 1). If both are free, prefer GPU 0.
+- **Resource claim**: A run reserves exactly one GPU for its full lifetime (`queued` → terminal state).
+- **Queue behavior**: If both GPUs are busy, new runs stay in `queued` until a GPU frees.
+- **Re-queue**: A `failed` or `cancelled` run is never automatically retried. The agent must submit a new run.
+
+This avoids distributed-scheduler complexity while keeping behavior predictable and observable.
 
 ## 12. Non-Goals (MVP)
 
