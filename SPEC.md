@@ -140,6 +140,31 @@ Every failed run must record a machine-readable `failure_reason`:
 | GET | `/projects/{id}/runs` | List recent runs for a project. |
 | GET | `/artifacts/{run_id}/{path}` | Download an artifact file. |
 
+### 6.1 Validation Architecture
+
+Validation happens in two layers:
+
+**API layer (preflight)**
+- Parse and normalize the incoming RunSpec.
+- Reject immediately with 4xx for:
+  - Missing required fields
+  - Unknown preset
+  - Override keys outside `allowed_overrides`
+  - Malformed asset URIs
+- This gives the agent fast failure without consuming queue or GPU capacity.
+
+**Scheduler core (authoritative)**
+- Final validation before run creation:
+  - Idempotency reservation and exact-match check (race-safe via DB unique constraint).
+  - Resource availability check (GPU count, memory).
+- The core is the single source of truth for run creation rules.
+- New entry points (CLI, batch submitter, future k8s controller) must route through the same core validator.
+
+**Idempotency in the core**
+- Same `idempotency_key` + same normalized spec → return existing run.
+- Same `idempotency_key` + different spec → 409 Conflict.
+- The DB enforces `UNIQUE(project_id, idempotency_key)` to protect against concurrent submission races.
+
 ### Logs API
 
 No WebSocket. Cursor-based tail for simple agent polling and retries:
@@ -207,6 +232,8 @@ Every preset must produce a `metrics.json` with at minimum the following fields.
 | `train.runtime_sec` | yes | Wall-clock training time in seconds. |
 | `train.samples_per_sec` | no | Throughput for capacity planning. |
 | `eval.final_loss` | no | Present if eval dataset was provided. |
+| `eval.runtime_sec` | no | Wall-clock eval time. |
+| `eval.dataset_name` | no | Which split or dataset was used for eval. |
 | `system.max_gpu_mem_mb` | yes | Peak VRAM observed during training. |
 | `system.gpu_name` | no | GPU model for reproducibility notes. |
 | `outcome.status` | yes | `succeeded` or `failed`. |
@@ -315,10 +342,11 @@ CREATE TABLE runs (
     status TEXT NOT NULL,
     failure_reason TEXT,
     artifact_path TEXT,
-    idempotency_key TEXT UNIQUE,
+    idempotency_key TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     started_at DATETIME,
-    finished_at DATETIME
+    finished_at DATETIME,
+    UNIQUE(project_id, idempotency_key)
 );
 
 CREATE TABLE artifacts (
