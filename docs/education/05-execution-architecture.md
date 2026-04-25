@@ -1,142 +1,203 @@
 # Execution Architecture: Why SDK, Why Two Plans, and Why Boundaries Matter
 
-## The decision we faced
+## The real problem we are solving
+The platform is not trying to automate `docker run`.
+It is trying to execute a **reproducible run state machine**.
 
-We had to choose how nano-backend.ai talks to Docker:
+That difference matters.
 
-- **CLI**: shell out to `docker run`, parse stdout/stderr.
-- **SDK**: use the Docker Python/Go SDK and treat Docker as a state machine substrate.
+If Docker is treated as a shell command, logic tends to leak into scripts:
+- text parsing replaces structured state,
+- runtime decisions become hard to trace,
+- scheduling and execution get mixed together,
+- failure reasons become vague.
 
-We chose **SDK-first with a narrow adapter**. This document explains why.
+If Docker is treated as a runtime substrate behind a narrow adapter, the system can keep state transitions, resource binding, and failure taxonomy explicit.
 
----
+## End-to-end flow
+A useful mental model is:
 
-## Why SDK over CLI
+```text
+RunSpec
+-> preset validation / config merge
+-> resolved_config.yaml
+-> ExecutionIntent
+-> scheduler / allocator
+-> ExecutionPlan
+-> runtime adapter (EnsureImage -> Create -> Start -> Wait)
+-> state transitions and artifact capture
+```
 
-| Concern | CLI | SDK |
-|---------|-----|-----|
-| State transitions | Parse text output; fragile across Docker versions | Native `preparing -> running -> terminal` mapping |
-| Cancel / inspect / wait | Race-prone shell scripts | First-class API calls with typed responses |
-| Error translation | Regex on stderr | Catch `ImageNotFound`, `ContainerCreateError`, map to domain reasons |
-| Failure taxonomy | Hard to distinguish `image_pull_failed` from `container_create_failed` | Clean operation-level mapping |
+The questions are deliberately split:
+- **submit path**: what should run?
+- **scheduler / allocator**: where and with which resources should it run?
+- **executor / runtime**: can the runtime materialize this bound plan?
 
-CLI is great for ops: an on-call engineer can `docker inspect` a hung container directly. But our platform is a **state machine**, not a shell script. SDK gives us compile-time contracts and clean failure taxonomy.
+That separation is what keeps the system legible.
 
-**Rule**: SDK drives the code path. CLI stays available for human debugging only.
+## Why SDK-first over CLI
+The CLI is not useless. It is great for human debugging.
+An operator can always inspect a container manually.
 
----
+But the main product path is not for humans typing commands. It is for the platform running a state machine reliably.
+
+| Concern | CLI-first | SDK-first |
+|---|---|---|
+| State transitions | infer by parsing output | map directly to runtime operations |
+| Error handling | text/regex heavy | typed API responses |
+| Cancel / wait / inspect | script coordination | direct runtime calls |
+| Failure taxonomy | blurrier | cleaner mapping |
+| Long-term extensibility | weaker | stronger |
+
+So the rule is simple:
+- **SDK drives the product path**
+- **CLI remains a human debugging path**
 
 ## The two-stage immutable plan
+A run should not jump straight from user spec to container execution.
+It should pass through two immutable objects.
 
-A run does not jump straight from spec to Docker container. It passes through two immutable objects.
+### Stage 1: `ExecutionIntent`
+This is the logical plan.
 
-### Stage 1: ExecutionIntent (logical plan)
+It says things like:
+- run ID,
+- preset,
+- image reference,
+- command and env intent,
+- logical mounts such as `workspace`, `artifacts`, `cache`,
+- logical resource request such as `gpu: 1`.
 
-Produced by submit/queue. Knows nothing about Docker.
+What it does **not** include:
+- GPU index,
+- concrete host paths,
+- node or daemon endpoint,
+- Docker-specific types.
 
-- `run_id`, `preset`, `image_ref`, `env`, `command`
-- Resources: `gpu: 1` (logical count)
-- Mounts: `workspace`, `artifacts`, `cache` (logical names)
-- No GPU index. No host path. No Docker type.
+### Stage 2: `ExecutionPlan`
+This is the bound plan.
 
-### Stage 2: ExecutionPlan (bound plan)
+It says things like:
+- assigned GPU index,
+- selected node or daemon endpoint,
+- concrete host mount paths,
+- temp directories,
+- final runtime environment values,
+- final image ref and pull behavior.
 
-Produced by scheduler + allocator. Consumed by executor.
+By the time the executor sees this object, all execution-critical values should already be fixed.
 
-- Assigned GPU index (`0` or `1`)
-- Selected node / daemon endpoint
-- Concrete host mount paths
-- Temp log and work directories
-- Concrete runtime env vars
-- Final image ref and pull policy
+## Why two plans matter
+If the executor starts deciding GPU indices or host paths, several things go wrong:
+- placement policy is no longer centralized,
+- deterministic replay becomes weaker,
+- multi-node support gets tangled into runtime code,
+- upper layers lose control over what was actually decided.
 
-**All execution values are fully resolved before the executor sees them.**
+That is why the architecture needs a hard rule:
 
-### Why two stages?
+> **The scheduler decides. The executor materializes.**
 
-If `Create()` starts deciding GPU indices or temp paths, then:
-- The scheduler loses control over resource placement.
-- Re-running the same spec may land on different hardware.
-- Multi-node extension requires rewriting the executor.
+The executor should not be clever. It should be precise.
 
-By resolving everything into `ExecutionPlan` first, the executor stays a dumb materializer. Smartness lives in the scheduler.
+## Layer boundaries
+| Layer | Knows Docker SDK? | Main job |
+|---|---|---|
+| Submit / Queue | No | validate request, produce logical intent |
+| Preset / Config | No | merge defaults, validate overrides, write resolved config |
+| Scheduler / Allocator | No | bind resources, node, paths, GPU |
+| Executor / Runtime adapter | Yes | translate bound plan into runtime calls |
 
----
+This keeps Docker details local instead of leaking upward into domain logic.
 
-## Layer boundaries: who knows Docker?
-
-| Layer | Imports Docker SDK? | Responsibility |
-|-------|---------------------|----------------|
-| Submit / Queue | No | Produce `ExecutionIntent` |
-| Preset / Config | No | Validate and merge config |
-| Scheduler / Allocator | No | Bind resources, produce `ExecutionPlan` |
-| Executor | Yes (adapter only) | Materialize `ExecutionPlan` via `Runtime` interface |
-
-The Docker adapter lives in `internal/executor/docker`. The interface lives in `pkg/executor/runtime.go`. Upper layers compile against the interface, not Docker.
-
-**If a file outside `internal/executor/docker` imports `github.com/docker/docker/client`, the build should break.**
-
----
-
-## Adapter pattern in practice
-
-The executor does not call `docker run`. It calls:
+## Runtime operations and state transitions
+A narrow runtime adapter can expose a small set of operations such as:
 
 ```go
-runtime.Create(ctx, plan)
-runtime.Start(ctx, handle)
-runtime.Wait(ctx, handle)
+EnsureImage(ctx, plan)
+Create(ctx, plan)
+Start(ctx, handle)
+Wait(ctx, handle)
 ```
 
-The adapter translates these into Docker SDK calls. If we later swap Docker for containerd or a remote daemon, only the adapter changes. The scheduler, queue, and preset layers stay untouched.
+Those map naturally into the run state machine:
 
----
+| Runtime operation | Likely phase | Example failure reason |
+|---|---|---|
+| `EnsureImage` | `preparing` | `image_pull_failed` |
+| `Create` | `preparing` | `container_create_failed` |
+| `Start` | `running` | `trainer_error` or startup failure |
+| `Wait` | `running` | `oom`, `timeout`, `trainer_error` |
 
-## State machine view
+This is much easier to reason about than a single opaque shell command.
 
-```
-queued -> preparing -> running -> succeeded
-              |            |
-              +-- failed   +-- failed / cancelled
-```
+## Concrete examples of boundary leaks
+### Bad move: executor picks a GPU index
+Why it is bad:
+- resource placement is now hidden in runtime code,
+- scheduler decisions are incomplete,
+- later multi-node support gets messy.
 
-`preparing` maps to concrete SDK operations:
+Correct home: scheduler / allocator.
 
-| SDK Operation | Failure Reason | Phase |
-|---------------|----------------|-------|
-| `EnsureImage` | `image_pull_failed` | preparing |
-| `Create` | `container_create_failed` | preparing |
-| `Start` | (rare, usually `trainer_error`) | running |
-| `Wait` | `oom`, `trainer_error`, `timeout` | running |
+### Bad move: executor invents host paths
+Why it is bad:
+- the bound plan no longer fully explains the run,
+- replay and debugging get weaker,
+- cache and volume policy become ad hoc.
 
-Because we use the SDK, we get structured errors per operation instead of parsing a single blob of stderr.
+Correct home: scheduler or storage planner.
 
----
+### Bad move: upper layers import Docker SDK types
+Why it is bad:
+- runtime concerns leak into business logic,
+- testing gets harder,
+- replacing the runtime adapter later becomes expensive.
 
-## GPU assignment
+Correct home: only inside the Docker adapter.
 
-- **One container gets exactly one GPU index.**
-- The allocator assigns the index.
-- The executor only materializes it (`NVIDIA_VISIBLE_DEVICES=i`).
+## GPU assignment rule
+For MVP, keep it boring:
+- one container gets exactly one GPU,
+- the allocator chooses the index,
+- the executor only materializes that choice.
 
-This makes GPU scheduling explicit and traceable. If a run used GPU 1, the plan says so. There is no hidden logic inside the executor.
+This is intentionally narrow. It keeps scheduling decisions explicit and testable.
 
----
+## Why this helps future phases
+A narrow adapter boundary is not only about cleanliness. It is about making later work land in the right place.
 
-## Extension path
+### Phase 2: cancellation and cleanup
+Better cancel semantics, OOM detection, and orphan cleanup should improve the adapter, not force submit or preset layers to learn Docker internals.
 
-The narrow executor interface is designed to survive these extensions without rewrites:
+### Phase 3: multi-node
+If multi-node arrives later, the allocator can bind:
+- node,
+- daemon endpoint,
+- GPU index.
 
-- **Phase 2**: Cancel (SIGTERM -> SIGKILL timeout), OOM detection, orphan cleanup. All implemented inside the adapter using existing interface methods.
-- **Phase 3**: Multi-node. Allocator binds `node + daemon_endpoint + gpu_index` into `ExecutionPlan`. `ContainerHandle.Node` carries the endpoint. Executor interface unchanged.
-- **Phase 4**: Cache / volume policy. Storage planner binds concrete mount paths. Executor still only materializes.
+The executor interface does not need to change much. It still receives a fully bound plan.
 
----
+### Phase 4: volume and cache policy
+If cache placement becomes smarter, that logic belongs in storage planning or allocation. The executor should still just materialize the selected paths and mounts.
 
-## Practical rule
+## Debugging checklist: where should this logic live?
+When adding a new piece of behavior, ask:
 
-> **Executor resolves nothing. It only materializes.**
+1. Does this decide **what** should run?
+   - submit / preset layer
+2. Does this decide **where** or **with which resources** it should run?
+   - scheduler / allocator
+3. Does this translate a fully bound plan into runtime API calls?
+   - executor / adapter
+4. Does it require Docker-specific types?
+   - keep it inside the Docker adapter
+5. Can the same `ExecutionPlan` be replayed deterministically?
+   - if not, some resolution logic is living in the wrong place
 
-If you find yourself adding "figure out the GPU index here" or "pick a temp directory inside the executor," stop. That decision belongs in the scheduler or allocator. The executor's job is to take a fully bound plan and turn it into a running container.
-
-This rule is what keeps the architecture narrow, testable, and ready for multi-node.
+## Key takeaways
+- The system is automating a run state machine, not a shell command.
+- `ExecutionIntent` captures logical intent, and `ExecutionPlan` captures bound execution reality.
+- The scheduler should decide; the executor should materialize.
+- Docker belongs behind a narrow adapter boundary.
+- Good boundaries are what make multi-node, cache policy, and cleanup extensible later.

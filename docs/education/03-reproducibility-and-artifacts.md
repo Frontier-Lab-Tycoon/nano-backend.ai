@@ -1,48 +1,160 @@
 # Reproducibility and Artifact Discipline
 
-## Reproducibility is not a bonus feature
+## Who this is for
+This note is for anyone designing or operating run records in nano-backend.ai.
 
-In ML research, if you cannot reproduce a result, you cannot trust it. For an agent-driven workflow, reproducibility is even stricter: the agent must be able to re-submit, compare, and chain experiments without human memory filling the gaps.
+If you are building an agent-driven workflow, reproducibility is not a nice extra. It is the thing that makes automation safe.
+
+## Reproducibility is an operational requirement
+In ML work, reproducibility is often discussed as a scientific virtue. That is true, but in an agent-run platform it is also an operational requirement.
+
+The agent must be able to answer questions like:
+- What changed between run A and run B?
+- Can I retry the same run exactly?
+- Can I trust this adapter enough to build the next run on top of it?
+- Which code, config, and image produced this artifact?
+
+If the answer lives only in chat history or shell memory, the system is not reproducible enough.
 
 ## Three layers of reproducibility
+### 1. Input reproducibility
+The same:
+- base model,
+- dataset,
+- preset,
+- overrides,
+- output contract.
 
-1. **Input reproducibility**: same model, same data, same hyperparameters.
-2. **Environment reproducibility**: same Docker image, same library versions, same CUDA drivers.
-3. **Provenance reproducibility**: a complete chain from git commit to run ID to artifact hash.
+### 2. Environment reproducibility
+The same:
+- container image,
+- package versions,
+- runtime assumptions,
+- mount layout,
+- cache behavior where relevant.
 
-nano-backend.ai enforces all three by design.
+### 3. Provenance reproducibility
+A complete trace from:
+- git commit,
+- run ID,
+- preset/config,
+- artifact bundle,
+- lineage metadata.
 
-## The artifact contract
+Good systems enforce all three. If one layer is weak, trust in the run becomes weak.
 
-Every run must produce a standardized bundle. This is not "nice to have" — it is the ledger.
+## What counts as source of truth
+In nano-backend.ai, the source of truth is not one file. It is a small set of mutually reinforcing records:
 
-| File | Purpose |
-|------|---------|
-| `spec.yaml` | Exactly what was submitted. No ambiguity. |
-| `resolved_config.yaml` | What actually ran (defaults + overrides merged). |
-| `stdout.log` / `stderr.log` | Complete training transcript. |
-| `metrics.json` | Structured data for downstream comparison. |
-| `report.md` | Human-readable summary for quick review. |
-| `adapter/` | The actual trainable output. |
+- `spec.yaml`: what the user submitted
+- `resolved_config.yaml`: what the system actually executed
+- run metadata: `run_id`, timestamps, status, `failure_reason`
+- lineage metadata: for example `git_sha`, issue/PR/thread references
+- artifact bundle: logs, metrics, report, adapter, optional merged output
 
-If `spec.yaml` and `resolved_config.yaml` are missing, the run is **incomplete** and cannot be trusted as a ledger entry.
+Together, these form the experiment ledger.
 
-## Why this matters for agents
+## `spec.yaml` vs `resolved_config.yaml`
+This distinction is worth teaching explicitly.
 
-An agent should be able to:
-- Compare run A and run B by diffing their `resolved_config.yaml` files.
-- Take the `adapter/` from run A and use it as the `base_model` for a second-stage run.
-- Re-run an experiment by copying the old `spec.yaml` and changing one override.
+### `spec.yaml`
+Records user intent.
 
-Without artifact discipline, the agent is forced to guess or ask a human. That breaks automation.
+It answers:
+- what did the user ask for?
+- what inputs and outputs were declared?
+- what project and lineage metadata were attached?
 
-## Practical rules
+### `resolved_config.yaml`
+Records execution reality.
 
-- Never overwrite an artifact directory. Run IDs are immutable.
-- Never trust an image tag like `latest` in a preset. Pin digests.
-- Always record `git_sha` in `lineage` so the code state is recoverable.
-- Treat metrics as structured data, not log text. Parsing logs with regex is fragile.
+It answers:
+- which preset defaults were filled in?
+- which overrides actually took effect?
+- what config did the trainer really see?
 
-## Bottom line
+You want both.
+Without `spec.yaml`, you lose the original intent.
+Without `resolved_config.yaml`, you lose the actual executed configuration.
 
-The artifact bundle is not "output." It is **evidence**. A run without a complete artifact bundle is an anecdote, not an experiment.
+## The artifact bundle contract
+Every run should produce a predictable bundle.
+
+| Artifact | Why it exists |
+|---|---|
+| `spec.yaml` | Preserve the original submission |
+| `resolved_config.yaml` | Preserve the actual executed config |
+| `stdout.log` | Full trainer output |
+| `stderr.log` | Errors and warnings |
+| `metrics.json` | Structured metrics for comparison |
+| `report.md` | Human-readable summary |
+| `adapter/` | Main trainable output |
+| `merged/` | Optional merged output |
+
+This bundle is not just "output." It is evidence.
+
+## What makes a run incomplete
+A run may produce some useful files and still be operationally incomplete.
+
+Examples:
+- adapter exists, but logs are missing,
+- metrics exist only as text buried in stdout,
+- `resolved_config.yaml` is missing,
+- lineage does not include `git_sha`,
+- artifact directory was overwritten.
+
+That kind of run may still contain something valuable, but it is no longer a clean ledger entry.
+
+## Practical example: comparing two runs
+Suppose run A and run B differ only in `learning_rate`.
+
+A good comparison should look like this:
+1. diff `resolved_config.yaml`,
+2. confirm base model, image, dataset, and preset stayed the same,
+3. inspect `metrics.json`,
+4. read `report.md` for quick summary,
+5. check logs only if the structured data looks suspicious.
+
+That is far more reliable than comparing free-form notes.
+
+## Practical example: chaining experiments
+Now suppose run A produced an adapter that you want to use as the starting point for run B.
+
+To do that safely, you need to know:
+- which base model the adapter came from,
+- which preset and config produced it,
+- whether the run completed successfully,
+- whether the artifact bundle is complete enough to trust.
+
+This is why lineage and artifact discipline matter. Reuse without evidence is guesswork.
+
+## Failure modes that break reproducibility
+Common problems:
+- mutable image tags like `latest`,
+- overwritten artifact directories,
+- missing config snapshots,
+- metrics only in unstructured logs,
+- missing `git_sha`,
+- unclear run lineage,
+- partial outputs without clear status semantics.
+
+These are not paperwork issues. They directly weaken experiment trust.
+
+## Debugging checklist: can I trust this run?
+Before treating a run as reusable evidence, ask:
+
+1. Do both `spec.yaml` and `resolved_config.yaml` exist?
+2. Is the artifact directory unique to this `run_id`?
+3. Is the image pinned immutably?
+4. Is `git_sha` recorded in lineage?
+5. Are metrics available as structured JSON?
+6. Do logs explain the final status?
+7. If an adapter exists, can I explain exactly how it was produced?
+
+If the answer to several of these is no, the run may still be interesting, but it should not be treated as a strong foundation for automation.
+
+## Key takeaways
+- Reproducibility is not just for papers; it is required for safe agent automation.
+- `spec.yaml` captures intent, and `resolved_config.yaml` captures execution reality.
+- The artifact bundle is an evidence package, not a dump folder.
+- A run without clean provenance is a story, not a reliable experiment.
