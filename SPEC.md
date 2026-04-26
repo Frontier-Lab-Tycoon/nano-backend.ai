@@ -116,11 +116,126 @@ queued → preparing → running → succeeded
 
 **Preparing** is explicit so that `image_pull_failed` and `dataset_stage_failed` are distinguishable from training crashes.
 
+## 4.1 Execution & Runtime Architecture
+
+The platform treats Docker as a **runtime substrate**, not a user-facing abstraction. All Docker-specific concerns are isolated behind a narrow adapter so that upper layers remain runtime-agnostic.
+
+### Two-Stage Immutable Plan
+
+Execution proceeds through two immutable data structures:
+
+1. **ExecutionIntent** (logical plan) — produced by the submit/queue layer.
+   - `run_id`, `preset`, `image_ref`, `env`, `command`
+   - Required resources: `gpu: 1` (logical count, not index)
+   - Required mounts: `workspace`, `artifacts`, `cache` (logical names)
+   - `resolved_config` path meaning (logical)
+   - Outputs contract
+   - **No Docker types. No GPU index. No host path.**
+
+2. **ExecutionPlan** (bound plan) — produced by the scheduler + allocator, consumed by the executor.
+   - Assigned GPU index (e.g., `0` or `1`)
+   - Selected node / daemon endpoint
+   - Concrete host mount paths
+   - Temp log / work directories
+   - Concrete runtime env vars
+   - Final image ref and pull policy
+   - **All values required for execution are fully resolved.**
+
+The executor's `Create()` and `Start()` must **materialize only** — they do not resolve or decide dynamic values. This preserves idempotency, reproducibility, and keeps multi-node extension (Phase 3) outside the executor.
+
+### Layer Boundaries
+
+| Layer | Knows Docker? | Responsibility |
+|-------|---------------|----------------|
+| Submit / Queue | No | Produce `ExecutionIntent` |
+| Preset / Resolve Config | No | Validate and merge config |
+| Scheduler / Allocator | No | Bind resources, produce `ExecutionPlan` |
+| Executor | Yes (adapter only) | Materialize `ExecutionPlan` via runtime interface |
+
+### Runtime Interface (Go)
+
+The executor depends on a runtime interface defined in `pkg/executor/runtime.go`. The Docker adapter lives only in `internal/executor/docker`.
+
+```go
+type Runtime interface {
+    EnsureImage(ctx context.Context, ref string, policy PullPolicy) error
+    Create(ctx context.Context, plan ExecutionPlan) (ContainerHandle, error)
+    Start(ctx context.Context, handle ContainerHandle) error
+    Wait(ctx context.Context, handle ContainerHandle) (ExitResult, error)
+    Inspect(ctx context.Context, handle ContainerHandle) (ContainerInfo, error)
+    Remove(ctx context.Context, handle ContainerHandle, force bool) error
+    StreamLogs(ctx context.Context, handle ContainerHandle, opts LogOptions) (io.ReadCloser, error)
+}
+
+type ContainerHandle struct {
+    ID   string // Docker container ID
+    Node string // empty in single-node MVP; daemon endpoint in Phase 3 multi-node
+}
+
+type ExecutionPlan struct {
+    RunID      string
+    ImageRef   string
+    GPUIndex   int          // concrete, assigned by allocator
+    Env        []string
+    Cmd        []string
+    HostMounts []Mount
+    TempDirs   []TempDir
+    // ... other bound fields
+}
+
+type ExitResult struct {
+    ExitCode  int
+    OOMKilled bool
+    Error     error
+}
+```
+
+Upper layers must not import Docker SDK types. The interface is the only contract.
+
+### MVP Executor Scope
+
+The Docker adapter implements exactly these operations for Phase 0:
+
+- `image_ensure` / `image_pull` (with cache check)
+- `container_create`
+- `container_start`
+- `container_wait`
+- `container_inspect`
+- `container_remove`
+- `logs_stream` / `artifact_verify`
+
+Everything else (networks, volumes beyond bind mounts, multi-GPU per container, Swarm, registry auth) is out of scope for MVP.
+
+### GPU Assignment
+
+- One container receives exactly one GPU index (`NVIDIA_VISIBLE_DEVICES=i` or `--gpus '"device=i"'`).
+- The allocator assigns the index; the executor only materializes it.
+- This makes GPU scheduling explicit and traceable.
+
+### Failure Taxonomy Mapping (Preparing Phase)
+
+The `preparing` state maps to concrete runtime operations:
+
+| Runtime Operation | Failure Reason |
+|-------------------|----------------|
+| Image pull | `image_pull_failed` |
+| Container create | `container_create_failed` |
+| (other) | `unknown` |
+
+This gives the agent a clear signal without parsing raw Docker stderr.
+
+### Extension Path
+
+- **Phase 2**: Cancel (SIGTERM → SIGKILL timeout), OOM detection, orphan cleanup
+- **Phase 3**: Multi-node — allocator binds `node + daemon_endpoint + gpu_index` into `ExecutionPlan`; executor interface stays unchanged
+- **Phase 4**: Cache / volume policy — storage planner binds concrete mount paths; executor still only materializes
+
 ## 5. Failure Taxonomy
 
 Every failed run must record a machine-readable `failure_reason`:
 
 - `image_pull_failed`
+- `container_create_failed`
 - `dataset_stage_failed`
 - `model_download_failed`
 - `oom`

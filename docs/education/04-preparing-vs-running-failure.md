@@ -1,58 +1,137 @@
 # Preparing Failure vs Running Failure
 
-## Why two phases?
+## Why this boundary exists
+A failed run is not always the same kind of failure.
 
-Training runs fail for different reasons. Some failures are about infrastructure. Some are about the experiment itself. If you lump them together, an agent cannot tell whether to retry with the same spec or to change the hyperparameters.
+Some failures happen **before the trainer starts**. Others happen **after training is already underway**. If we collapse those into one bucket called `failed`, the agent cannot decide whether to:
+- retry the same spec,
+- change the experiment,
+- or fix the environment.
 
-The `preparing` state exists to draw this line explicitly.
+That is why the boundary between `preparing` and `running` matters.
 
-## Preparing phase
+## State-machine view
+A simplified run lifecycle looks like this:
 
-`preparing` covers everything that happens before the trainer process starts:
+```text
+queued -> preparing -> running -> succeeded
+              |            |
+              +-- failed   +-- failed / cancelled
+```
 
-- Docker image pull
-- Base model download from Hugging Face Hub
-- Dataset download or local path verification
-- Cache warming
+The key question is: **did the trainer process actually start?**
 
-These are all **environmental** steps. They depend on network, disk space, and external service availability. They do not depend on your learning rate or LoRA rank.
+If not, the problem is usually environmental.
+If yes, the problem is usually about the experiment, trainer code, or resource sizing.
 
-### Common preparing failures
+## What belongs to `preparing`
+`preparing` covers everything that must be resolved before the trainer begins real work.
 
-| Failure reason | What happened | Agent should do |
-|----------------|---------------|-----------------|
-| `image_pull_failed` | Docker registry unreachable or bad image tag | Retry later or check preset image |
-| `model_download_failed` | HF Hub down, model ID typo, or disk full | Verify model ID, check disk, retry |
-| `dataset_stage_failed` | Dataset not found, split missing, or network error | Verify dataset path and split name |
+Typical examples:
+- pulling the container image,
+- checking or downloading the base model,
+- staging the dataset,
+- warming caches,
+- validating mount paths,
+- creating the container/runtime environment.
 
-If a run fails in `preparing`, the experiment itself is innocent. The agent can re-submit the exact same spec once the environment is healthy.
+These steps are mostly about infrastructure readiness.
 
-## Running phase
+## What belongs to `running`
+`running` begins when the trainer process starts.
 
-`running` begins the moment the trainer process starts. From here on, failure is about the experiment or the code.
+Typical examples:
+- training loop starts,
+- batches are processed,
+- loss is emitted,
+- checkpoints or adapters begin to appear,
+- the process exits successfully or with an error.
 
-### Common running failures
+From this point on, failures usually say something about the experiment itself or the runtime limits it hit.
 
-| Failure reason | What happened | Agent should do |
-|----------------|---------------|-----------------|
-| `oom` | Batch size or sequence length too large for VRAM | Reduce `micro_batch_size` or `max_seq_length` |
-| `trainer_error` | Code exception, misformatted data, or bug in trainer | Check `stderr.log`, fix data or config |
-| `timeout` | Run exceeded `resources.timeout` | Increase timeout or reduce `num_epochs` |
-| `cancelled` | Agent or user sent cancel signal | Inspect partial logs, decide whether to retry |
+## Common `preparing` failures
+| Failure reason | What it usually means | Default reaction |
+|---|---|---|
+| `image_pull_failed` | bad image ref, registry outage, auth issue | check image / retry later |
+| `model_download_failed` | bad model ID, HF outage, disk issue | verify ID, disk, retry |
+| `dataset_stage_failed` | missing path, missing split, staging error | verify dataset source |
+| `container_create_failed` | invalid runtime config, mount problem, device request issue | inspect runtime setup |
 
-These failures are **experimental**. Re-submitting the same spec without changes will likely fail again.
+A useful rule: a `preparing` failure often means the **spec may still be valid**.
 
-## Operational value
+## Common `running` failures
+| Failure reason | What it usually means | Default reaction |
+|---|---|---|
+| `oom` | model/batch/sequence too large for VRAM | reduce memory pressure |
+| `trainer_error` | trainer exception, bad data, config bug | inspect logs and data |
+| `timeout` | run exceeded time budget | reduce work or raise limit |
+| `cancelled` | user/agent stopped the run | inspect partial outputs |
 
-Separating these phases gives the agent a clear decision tree:
+A useful rule: a `running` failure often means **retrying unchanged is wasteful**.
 
-1. Did it fail in `preparing`?
-   - Yes → Fix environment, retry same spec.
-2. Did it fail in `running`?
-   - Yes → Change something in the spec, then retry.
+## Why this matters for retry policy
+This phase boundary turns `failed` into something actionable.
 
-Without this separation, an `oom` looks the same as a network hiccup. An agent that retries blindly wastes GPU time and produces noise in the ledger.
+### If a run failed in `preparing`
+The environment may be the real problem.
+Examples:
+- registry outage,
+- temporary network problem,
+- transient model download failure.
 
-## Practical rule
+In that case, retrying the same spec may be completely reasonable.
 
-Always inspect `failure_reason` before deciding to retry. Never assume "failed" means "try again."
+### If a run failed in `running`
+The experiment or execution budget may be the real problem.
+Examples:
+- sequence length too large,
+- batch size too large,
+- trainer bug,
+- timeout due to too many epochs.
+
+In that case, submitting the same spec again often just wastes GPU time.
+
+## Concrete example
+Imagine two failed runs:
+
+- **Run A** fails with `model_download_failed` before training begins.
+- **Run B** fails with `oom` forty seconds after training starts.
+
+Both end in `failed`, but the next action should differ.
+
+- Run A: check the environment, then retry the same spec.
+- Run B: change batch size, sequence length, model size, or timeout before retrying.
+
+That distinction is exactly why the state model exists.
+
+## Failure-handling decision tree
+1. Did the run ever enter `running`?
+   - No -> inspect image/model/dataset/runtime setup.
+   - Yes -> inspect trainer config, logs, and resource sizing.
+2. What is `failure_reason`?
+   - environment/staging reason -> same spec may still be valid
+   - execution/experiment reason -> change something first
+3. Is there evidence of a transient external issue?
+   - Yes -> same-spec retry is justified
+   - No -> modify the spec or fix the code path
+
+## Debugging checklist by phase
+### If failure happened in `preparing`
+- Is the image reference correct and reachable?
+- Is the model source healthy and accessible?
+- Does the dataset path or split exist?
+- Is there enough disk space for staging and cache?
+- Did container creation fail before the trainer existed?
+
+### If failure happened in `running`
+- Did `stderr.log` show an exception?
+- Did the process hit OOM?
+- Did `resources.timeout` trigger?
+- Are `micro_batch_size`, `max_seq_length`, or `num_epochs` too aggressive?
+- Did the trainer produce partial outputs before failing?
+
+## Key takeaways
+- `preparing` vs `running` is not cosmetic; it defines the retry policy.
+- A `preparing` failure often points to environment or staging issues.
+- A `running` failure often points to experiment, code, or resource-sizing issues.
+- Never blindly retry a failed run without checking the phase and `failure_reason`.
