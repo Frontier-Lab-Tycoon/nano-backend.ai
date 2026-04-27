@@ -89,20 +89,27 @@ Before a run enters `running`, the platform must resolve all assets during `prep
 
 If `idempotency_key` is provided:
 
-1. **Exact match**: If a run with the same key exists and the submitted spec is byte-for-byte identical, return the existing run immediately (HTTP 200 with existing `run_id`).
-2. **Conflict**: If a run with the same key exists but the spec differs, return HTTP 409 Conflict with the existing `run_id` so the agent can inspect the mismatch.
+1. **Exact match**: If a run with the same key exists and the canonical normalized RunSpec is identical, return the existing run immediately (HTTP 200 with existing `run_id`).
+2. **Conflict**: If a run with the same key exists but the canonical normalized RunSpec differs, return HTTP 409 Conflict with the existing `run_id` so the agent can inspect the mismatch.
 3. **No key**: Normal submission; no deduplication.
 
 This prevents an agent that retries after a network blip from accidentally spawning duplicate training jobs.
 
+Canonical normalization must be deterministic across API, scheduler, and future entry points:
+
+- Apply default values before comparing specs.
+- Normalize equivalent asset references where the platform defines an equivalence, such as bare HF IDs and `hf://` references.
+- Serialize maps in stable key order.
+- Do not include request bytes outside the normalized RunSpec in the comparison.
+
 ## 4. State Machine
 
-Runs advance through the following states:
+MVP runs advance through the following states:
 
 ```
 queued → preparing → running → succeeded
                     ↓
-              failed / cancelled
+                  failed
 ```
 
 | State | Meaning |
@@ -112,9 +119,20 @@ queued → preparing → running → succeeded
 | `running` | Trainer process is active. |
 | `succeeded` | Trainer exited 0 and all outputs were captured. |
 | `failed` | Trainer exited non-zero or output capture failed. |
-| `cancelled` | User or agent requested cancellation. |
 
 **Preparing** is explicit so that `image_pull_failed` and `dataset_stage_failed` are distinguishable from training crashes.
+
+### 4.0.1 Allowed Transitions
+
+| From | To | Notes |
+|------|----|-------|
+| `queued` | `preparing` | Scheduler assigns a GPU and begins preparation. |
+| `preparing` | `running` | Image, assets, mounts, and execution plan are ready. |
+| `preparing` | `failed` | Preparation failed; `failure_reason` is required. |
+| `running` | `succeeded` | Trainer exited 0 and required outputs were captured. |
+| `running` | `failed` | Trainer, timeout, OOM, or artifact capture failed; `failure_reason` is required. |
+
+`succeeded` and `failed` are terminal in the MVP. Phase 2 will add cancellation semantics and the `cancelled` terminal state.
 
 ## 4.1 Execution & Runtime Architecture
 
@@ -241,8 +259,9 @@ Every failed run must record a machine-readable `failure_reason`:
 - `oom`
 - `trainer_error`
 - `timeout`
-- `cancelled`
 - `unknown`
+
+`cancelled` is reserved for Phase 2 and is not emitted by the MVP.
 
 ## 6. API (Minimal Set)
 
@@ -251,9 +270,10 @@ Every failed run must record a machine-readable `failure_reason`:
 | POST | `/runs` | Submit a RunSpec. Returns `{run_id, status}`. |
 | GET | `/runs/{id}` | Full run record including spec and status. |
 | GET | `/runs/{id}/logs` | Tail logs with cursor pagination. |
-| POST | `/runs/{id}/cancel` | Request cancellation. |
 | GET | `/projects/{id}/runs` | List recent runs for a project. |
 | GET | `/artifacts/{run_id}/{path}` | Download an artifact file. |
+
+`POST /runs/{id}/cancel` is deferred to Phase 2.
 
 ### 6.1 Validation Architecture
 
@@ -401,7 +421,7 @@ A preset is not just a Docker image. It is a **behavioral contract** between the
 1. `/workspace/output/spec.yaml` — copy of the submitted spec.
 2. `/workspace/output/resolved_config.yaml` — the actual config used for training.
 3. `/workspace/output/stdout.log` and `/workspace/output/stderr.log`.
-4. `/workspace/output/metrics.json` — at minimum `{"train_loss": [...], "eval_loss": [...], "epochs": N}`.
+4. `/workspace/output/metrics.json` — must satisfy the minimum schema in Section 7.1.
 5. `/workspace/output/report.md` — human-readable summary (training time, final loss, hardware used).
 6. `/workspace/output/adapter/` — if `outputs.save_adapter: true`.
 7. `/workspace/output/merged/` — if `outputs.save_merged: true`.
@@ -481,11 +501,11 @@ JSON columns keep the schema stable during early iteration. Add typed columns on
 MVP scheduling is intentionally trivial because the hardware is fixed (single node, 2× RTX 3090).
 
 - **Policy**: FIFO per GPU. No preemption, no bin-packing, no priority queues.
-- **Concurrency**: One run per GPU. Maximum two runs in `running` state simultaneously.
+- **Concurrency**: One run per GPU. Maximum two runs may have an assigned GPU simultaneously.
 - **GPU selection**: Assign the first free GPU (0 or 1). If both are free, prefer GPU 0.
-- **Resource claim**: A run reserves exactly one GPU for its full lifetime (`queued` → terminal state).
+- **Resource claim**: A run reserves exactly one GPU while it is in `preparing` or `running`.
 - **Queue behavior**: If both GPUs are busy, new runs stay in `queued` until a GPU frees.
-- **Re-queue**: A `failed` or `cancelled` run is never automatically retried. The agent must submit a new run.
+- **Re-queue**: A `failed` run is never automatically retried. The agent must submit a new run.
 
 This avoids distributed-scheduler complexity while keeping behavior predictable and observable.
 

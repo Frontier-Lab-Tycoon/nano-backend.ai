@@ -1,68 +1,82 @@
 # Nano Backend.AI
 
-A minimal reimplementation of [Backend.AI](https://backend.ai) — designed for learning,
-on-premise deployment, and AI-agent-first interaction.
+A small Go backend for an agent-native fine-tuning ledger.
 
-## Goals
+Phase 0 is intentionally narrow: it targets a single machine with 2x RTX 3090 GPUs and runs one-GPU LoRA fine-tuning jobs from validated presets. The goal is not to expose a generic job runner; the goal is to make training runs submit-able, inspectable, and reproducible by AI agents.
 
-- Relearn Backend.AI's core architecture through a small-scale redesign
-- Practice production-grade design decisions
-- Experiment with AI-agent-first codebase operations
-- Prioritize easy install, upgrade, and migration for on-premise use
+See [`SPEC.md`](SPEC.md) for the full MVP contract.
+
+## MVP Goals
+
+- Accept declarative RunSpecs built from `preset + overrides`
+- Validate presets and overrides before consuming queue or GPU capacity
+- Persist every run in a local SQLite ledger
+- Execute at most two single-GPU runs concurrently
+- Keep Docker behind a narrow runtime adapter
+- Preserve logs, config, metrics, and artifacts for every terminal run
+- Make failures machine-readable through explicit run states and `failure_reason`
 
 ## API Design Philosophy
 
-AI agents are the primary consumer. Every response is machine-readable first:
-structured JSON with explicit `status`, `reason`, and `next_action_hint` fields.
-Long-running operations expose a pollable job model.
-Human users interact through a `/v1/chat/completions`-compatible conversational layer.
+AI agents are the primary consumer. Responses should be machine-readable first: structured JSON, explicit statuses, stable error reasons, and clear next-step hints where useful.
 
-## Architecture
+Long-running operations expose pollable resources. For Phase 0, logs use cursor-based polling rather than WebSockets.
 
-```
-┌─────────────────┐
-│  Reverse Proxy  │  ← TLS termination, static/API proxy
-└───────┬─────────┘
-        │
-┌───────▼───────────┐      gRPC      ┌─────────────────┐
-│     Manager       │ ◄────────────► │    Agent(s)     │
-│  (control plane)  │                │(execution plane)│
-└──┬──────────┬─────┘                └─────────────────┘
-   │          │
-   ▼          ▼
-┌────────┐  ┌───────┐
-│Postgres│  │ Redis │
-│(state) │  │(coord)│
-└────────┘  └───────┘
+## Phase 0 Architecture
+
+```text
+RunSpec
+  -> API preflight validation
+  -> preset registry / resolved config
+  -> SQLite run ledger
+  -> FIFO scheduler / GPU allocator
+  -> ExecutionIntent
+  -> ExecutionPlan
+  -> runtime adapter
+  -> local artifact store
 ```
 
-| Component     | Role                                          |
-|---------------|-----------------------------------------------|
-| Manager       | External API, scheduling, metadata, state mgmt |
-| Agent         | Job execution, heartbeat, local executor       |
-| PostgreSQL    | Durable state, source of truth                 |
-| Redis         | Ephemeral coordination, event bus, cache        |
-| Reverse Proxy | Ingress, TLS, static & API proxy               |
+| Component | Role |
+|-----------|------|
+| HTTP API | Submit and inspect runs, logs, and artifacts |
+| Preset registry | Validate presets, allowed overrides, and defaults |
+| Scheduler / allocator | FIFO scheduling and 2-GPU assignment |
+| Runtime adapter | Materialize execution plans; Docker-specific code stays here |
+| SQLite | Durable source of truth for projects, runs, and artifact metadata |
+| Local artifact store | Stores specs, resolved configs, logs, metrics, reports, adapters |
 
 ## Tech Stack
 
 - **Language:** Go
-- **External API:** HTTP + JSON REST (net/http + chi)
-- **Internal API:** gRPC
-- **Database:** PostgreSQL
-- **Cache / Coordination:** Redis
+- **External API:** HTTP + JSON REST
+- **Database:** SQLite for Phase 0
+- **Runtime substrate:** Docker adapter behind a Go interface
+- **Storage:** Local filesystem artifact store
 
-## Non-Goals (v0)
+## Future Architecture Notes
 
-Multi-tenancy · Auth · GPU scheduling · Image build pipeline · Advanced proxy routing · Distributed DB
+Postgres, Redis, gRPC manager/agent separation, multi-node scheduling, and richer cancellation/orphan cleanup semantics are future architecture directions, not Phase 0 requirements.
+
+## Non-Goals (MVP)
+
+- Multi-tenant quota or policy enforcement
+- Distributed training
+- Kubernetes native integration
+- Real-time serving orchestration
+- Web UI or dashboard
+- Advanced scheduling or bin-packing
+- Webhook or notification system
+- W&B SaaS integration
+- Cancel API implementation, deferred to Phase 2
 
 ## Project Layout
 
-```
-├── CLAUDE.md          # AI agent guidelines (root-level principles)
-├── cmd/               # Binary entry points (manager, agent)
-├── internal/          # Private packages (common, manager, agent)
-├── docs/design/       # Detailed design documents
+```text
+├── CLAUDE.md          # AI agent guidelines
+├── cmd/               # Binary entry points
+├── internal/          # Private packages
+├── docs/              # Design, education, and learning notes
+├── SPEC.md            # Phase 0 MVP specification
 └── Makefile           # Build, test, lint, fmt targets
 ```
 
