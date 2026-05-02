@@ -1,11 +1,17 @@
-# nano-backend.ai MVP Epic / Issue Breakdown
+# nano-backend.ai Phase 0 Epic / Story / Task Summary
 
 > Source: `SPEC.md`
 > Scope: MergeOwl Phase 0 — single-node, preset-validated fine-tuning ledger
 
+## Decomposition Rules
+
+- **Epic**: one business capability, large enough to contain multiple PR-sized Stories.
+- **Story**: one PR-sized vertical slice with type definition, implementation, and tests.
+- **Task**: a small implementation chore inside a Story; usually one commit or less.
+
 ## Product Direction
 
-The MVP should be treated as a **preset-validated fine-tuning ledger**, not a generic job runner.
+The MVP is a **preset-validated fine-tuning ledger**, not a generic job runner.
 
 The central product path is:
 
@@ -21,660 +27,370 @@ RunSpec
 -> logs / artifacts / terminal run state
 ```
 
-The safest implementation path is to build the ledger and state machine first, then attach Docker behind the runtime interface.
-
-## Epic 1 Alignment Decisions
-
-These decisions were applied before starting the implementation epics so the MVP contract is stable.
-
-### Decision: Align README with SPEC MVP architecture
-
-**Decision**
-
-`README.md` describes the Phase 0 target as a local, single-node, SQLite-backed fine-tuning ledger. Postgres, Redis, gRPC, and manager/agent separation are future architecture notes.
-
-**Applied Criteria**
-
-- README describes SQLite/local single-node MVP as the current target.
-- Postgres/Redis/gRPC are moved to future architecture notes, if still desired.
-- Non-goals match `SPEC.md`.
-
-### Decision: Define canonical idempotency comparison
-
-**Decision**
-
-Use canonical normalized RunSpec equality, not raw request byte comparison.
-
-**Applied Criteria**
-
-- RunSpec normalization rules are documented.
-- Idempotency compares canonical normalized JSON/YAML, not raw request bytes.
-- Same `project_id + idempotency_key + same normalized spec` returns HTTP 200 with existing run.
-- Same `project_id + idempotency_key + different normalized spec` returns HTTP 409.
-
-### Decision: Unify metrics.json schema
-
-**Decision**
-
-Use the nested Section 7.1 schema as the platform contract. Presets may include additional fields, but must not conflict with required keys.
-
-**Applied Criteria**
-
-- `metrics.json` required schema appears once.
-- Preset execution contract references the same schema.
-- Artifact verifier validates the final agreed schema.
-
-### Decision: Defer cancel API to Phase 2
-
-**Decision**
-
-Defer cancel API implementation to Phase 2.
-
-**Applied Criteria**
-
-- SPEC API table marks `POST /runs/{id}/cancel` as deferred to Phase 2 or removes it from the MVP table.
-- Phase 2 cancel behavior will define semantics for `queued`, `preparing`, and `running`.
-- Epic 4 does not include a cancel implementation issue for MVP.
-
-### Decision: Clarify GPU reservation lifetime
-
-**Decision**
-
-Queued runs do not reserve a GPU. GPU assignment begins when the scheduler promotes a run into `preparing`.
-
-**Applied Criteria**
-
-- `queued` means no GPU is assigned.
-- `preparing` and `running` have an assigned GPU.
-- Terminal states release the GPU.
-- Run records expose assigned GPU when present.
-
 ## Recommended Epic Order
 
-1. Spec Alignment
-2. Core Domain & SQLite Ledger
-3. Preset Registry & RunSpec Validation
-4. Runs API
-5. Scheduler & Execution Planning
-6. Runtime Interface & Docker Adapter
-7. Local Storage, Logs, and Artifacts
-8. Asset Staging & HF Cache
-9. Phase 0 Preset Container Contracts
+1. Submit a validated run into the ledger
+2. Complete a fake-runtime run end-to-end
+3. Inspect logs and artifacts for every run
+4. Execute runs through Docker with GPU assignment
+5. Stage HF/local assets before execution
+6. Validate Phase 0 preset container contracts
 
 ---
 
-## Epic 1: Spec Alignment
+## Epic 1: Submit a Validated Run Into the Ledger
 
-Status: applied in the initial planning PR.
+- **Goal**: Accept a RunSpec, validate it against presets, and persist a durable run record.
+- **Why**: The ledger is the product foundation; execution should never start from an unvalidated request.
+- **Done when**: Agents can submit a run, retry idempotently, and inspect the stored run contract.
 
-This epic resolves contradictions in the draft spec so implementation work has stable contracts.
+### Story 1.1: Define the Run Lifecycle Contract
 
-### Issues
+- Establish the canonical public shapes for projects, runs, specs, artifacts, statuses, and failure reasons.
+- Keep lifecycle rules typed and testable before storage, API, or runtime code depends on them.
+- This Story should be a narrow domain PR with serialization and state-transition tests.
 
-#### Issue 1.1: Update README to match Phase 0 MVP
+**Tasks**
 
-**Acceptance Criteria**
+- Task: Add `Project`, `Run`, `RunSpec`, `DatasetRef`, `ResourceRequest`, `RunOutputs`, `Lineage`, and `Artifact` types.
+- Task: Add `RunStatus` and `FailureReason` typed constants.
+- Task: Add the state transition guard, including terminal-state behavior and `failed` reason requirements.
 
-- README describes the MVP as local, single-node, SQLite-backed.
-- Future architecture is clearly separated from current implementation.
-- API philosophy remains agent-first and machine-readable.
+### Story 1.2: Persist Runs in SQLite With Idempotency
 
-#### Issue 1.2: Add explicit run state transition table
+- Store run records durably with SQLite as the Phase 0 source of truth.
+- Enforce idempotent submit behavior using `project_id + idempotency_key` and normalized spec comparison.
+- This Story should prove create/get/list/update repository behavior without involving HTTP.
 
-**Acceptance Criteria**
+**Tasks**
 
-- Allowed transitions are documented.
-- Invalid transitions are documented or implied by the table.
-- Terminal states are clearly identified.
-- `failure_reason` is required for `failed`.
+- Task: Implement `run_` ULID generation with URL-safe, time-sortable IDs.
+- Task: Add repeatable migrations for `projects`, `runs`, and `artifacts`.
+- Task: Implement repository methods for create, get, list, status updates, and artifact metadata.
 
-#### Issue 1.3: Finalize idempotency semantics
+### Story 1.3: Validate RunSpecs Through Presets
 
-**Acceptance Criteria**
+- Validate user intent before queueing or reserving runtime capacity.
+- Resolve preset defaults and overrides into deterministic config output.
+- This Story should reject invalid specs and produce stable resolved config without Docker.
 
-- Canonical normalization is documented.
-- Conflict response includes existing `run_id`.
-- Concurrent submit behavior relies on DB uniqueness.
+**Tasks**
 
-#### Issue 1.4: Finalize artifact and metrics contract
+- Task: Add a preset registry loaded from local YAML files or embedded defaults.
+- Task: Add Phase 0 preset definitions for `axolotl-lora-sft` and `unsloth-lora-sft`.
+- Task: Implement required-field, override-key, resource, timeout, memory, and asset URI validation.
+- Task: Generate deterministic `resolved_config.yaml` content from defaults plus overrides.
 
-**Acceptance Criteria**
+### Story 1.4: Expose Submit and Run Lookup APIs
 
-- Required artifact files are listed once.
-- `metrics.json` minimum schema is consistent.
-- Missing required files maps to `trainer_error`.
+- Provide the minimum REST surface for creating and inspecting a run.
+- Return structured, machine-readable responses for success, validation failure, missing runs, and idempotency conflicts.
+- This Story should connect validation, repository creation, and readback through HTTP tests.
 
-#### Issue 1.5: Defer cancel API to Phase 2
+**Tasks**
 
-**Acceptance Criteria**
+- Task: Implement `POST /runs` with validation, idempotent retry, and conflict handling.
+- Task: Implement `GET /runs/{id}` with full run state, timestamps, failure reason, and artifact path.
+- Task: Standardize API errors with `status`, `reason`, and `next_action_hint`.
 
-- SPEC API table marks `POST /runs/{id}/cancel` as Phase 2 or removes it from the MVP API table.
-- Extension path remains the source for future cancel semantics.
-- MVP implementation issues do not include cancel API work.
+### Story 1.5: List Runs for a Project
 
----
+- Let agents inspect recent project activity without scanning individual run IDs.
+- Keep list semantics simple and stable for Phase 0: default limit and newest-first ordering.
+- This Story is independent once the repository and run response shape exist.
 
-## Epic 2: Core Domain & SQLite Ledger
+**Tasks**
 
-Create the durable run ledger and core domain model.
-
-### Issues
-
-#### Issue 2.1: Add core run domain types
-
-**Scope**
-
-- `Project`
-- `Run`
-- `RunSpec`
-- `DatasetRef`
-- `ResourceRequest`
-- `RunOutputs`
-- `Lineage`
-- `Artifact`
-- `RunStatus`
-- `FailureReason`
-
-**Acceptance Criteria**
-
-- Types match SPEC fields.
-- Status and failure reason are enum-like typed constants.
-- Unit tests cover JSON serialization for public API shapes.
-
-#### Issue 2.2: Implement `run_` ULID generation
-
-**Acceptance Criteria**
-
-- Run IDs use `run_` prefix.
-- IDs are URL-safe and sortable by creation time.
-- Unit tests verify prefix and parse behavior.
-
-#### Issue 2.3: Add SQLite schema and migrations
-
-**Acceptance Criteria**
-
-- Tables exist for `projects`, `runs`, and `artifacts`.
-- JSON fields are stored as text.
-- `UNIQUE(project_id, idempotency_key)` exists.
-- Migration is repeatable in tests.
-
-#### Issue 2.4: Implement run repository
-
-**Acceptance Criteria**
-
-- Create run.
-- Get run by ID.
-- List runs by project.
-- Update status, timestamps, failure reason, artifact path.
-- Store and list artifact metadata.
-
-#### Issue 2.5: Implement state transition guard
-
-**Acceptance Criteria**
-
-- Valid transitions are accepted.
-- Invalid transitions return typed errors.
-- Terminal runs cannot move to non-terminal states.
-- `failed` requires `failure_reason`.
+- Task: Implement `GET /projects/{id}/runs`.
+- Task: Document and enforce the default result limit.
+- Task: Test newest-first ordering and empty project behavior.
 
 ---
 
-## Epic 3: Preset Registry & RunSpec Validation
+## Epic 2: Complete a Fake-Runtime Run End-to-End
 
-Validate incoming RunSpecs and produce resolved configs without involving Docker.
+- **Goal**: Submit a valid RunSpec and drive it to a terminal state without Docker or GPUs.
+- **Why**: The product contract should be proven before real runtime complexity is attached.
+- **Done when**: CI can exercise `queued -> preparing -> running -> succeeded/failed` deterministically.
 
-### Issues
+### Story 2.1: Define Execution and Runtime Contracts
 
-#### Issue 3.1: Add preset registry
+- Separate logical execution intent from concrete runtime materialization.
+- Keep Docker types out of scheduler, preset, and API packages.
+- This Story creates the interface boundary that later Docker work implements.
 
-**Acceptance Criteria**
+**Tasks**
 
-- Presets can be loaded from local YAML files or embedded defaults.
-- Registry lookup by preset name works.
-- Unknown preset returns validation error.
+- Task: Define `ExecutionIntent` with logical run information only.
+- Task: Define `ExecutionPlan` with concrete GPU, mounts, environment, command, and temp directories.
+- Task: Define the runtime interface for image ensure, create, start, wait, inspect, remove, and logs.
 
-#### Issue 3.2: Add Phase 0 preset definitions
+### Story 2.2: Schedule Queued Runs With Two-GPU Allocation
 
-**Scope**
+- Promote eligible runs from `queued` to `preparing` using FIFO ordering.
+- Assign GPUs only when preparation starts; queued runs must not reserve GPU capacity.
+- This Story should cover allocation, release, and invalid transition behavior with unit tests.
 
-- `axolotl-lora-sft`
-- `unsloth-lora-sft`
+**Tasks**
 
-**Acceptance Criteria**
+- Task: Implement the two-GPU allocator with first-free assignment.
+- Task: Record assigned GPU on run records while present.
+- Task: Implement the scheduler loop and preparation-state transitions.
 
-- Each preset includes runtime image, command or entrypoint, env, defaults, and allowed overrides.
-- Both presets expose LoRA-focused overrides.
-- Tests verify registry load.
+### Story 2.3: Drive Terminal States Through Fake Runtime
 
-#### Issue 3.3: Implement RunSpec preflight validation
+- Use a fake runtime to prove the scheduler can complete success and failure paths.
+- Keep the test path deterministic and independent of Docker images, HF assets, or physical GPUs.
+- This Story validates the end-to-end lifecycle in CI.
 
-**Acceptance Criteria**
+**Tasks**
 
-- Required fields are enforced.
-- Unknown preset is rejected.
-- Override keys outside `allowed_overrides` are rejected.
-- Resource request must be `gpu: 1`.
-- Timeout and memory formats are validated.
-- MVP resource limits are explicit and validated against configured maximums.
+- Task: Implement fake runtime success, failure, wait result, and log stream behavior.
+- Task: Integrate fake runtime with the scheduler.
+- Task: Test `succeeded` and mapped `failed` outcomes from submitted runs.
 
-#### Issue 3.4: Implement asset URI normalization
+### Story 2.4: Persist Platform Audit Copies Before Execution
 
-**Acceptance Criteria**
+- Store platform-written `spec.yaml` and `resolved_config.yaml` before runtime execution starts.
+- Preserve reproducibility even when a trainer fails or emits incomplete outputs.
+- This Story gives the fake-runtime slice an artifact audit trail without requiring artifact verification.
 
-- Bare HF IDs normalize to HF asset references.
-- `hf://` references are accepted.
-- `local://<absolute_path>` references are accepted.
-- Malformed asset URIs are rejected.
+**Tasks**
 
-#### Issue 3.5: Implement resolved config generation
-
-**Acceptance Criteria**
-
-- Preset defaults and overrides merge deterministically.
-- Submitted override values win over defaults.
-- Resolved config can be serialized to YAML.
-- Tests cover deterministic output.
+- Task: Implement a local filesystem storage driver with project-aware namespacing.
+- Task: Prevent cross-project collisions and path traversal.
+- Task: Write platform audit copies before fake-runtime success is recorded.
 
 ---
 
-## Epic 4: Runs API
+## Epic 3: Inspect Logs and Artifacts for Every Run
 
-Expose the minimal REST API for submitting and inspecting runs.
+- **Goal**: Make terminal and in-progress runs inspectable without SSH access.
+- **Why**: Agents need structured logs and artifacts to diagnose failures and reproduce outcomes.
+- **Done when**: Logs can be polled and artifact files can be downloaded safely.
 
-`POST /runs/{id}/cancel` is intentionally deferred to Phase 2 and is not part of the MVP API implementation scope.
+### Story 3.1: Capture Runtime Logs
 
-### Issues
+- Capture stdout and stderr separately for every run.
+- Preserve partial logs on failed or interrupted execution paths.
+- This Story should start with file-based logs and keep Docker buffering behind the same API.
 
-#### Issue 4.1: Implement `POST /runs`
+**Tasks**
 
-**Acceptance Criteria**
+- Task: Write `stdout.log` and `stderr.log`.
+- Task: Preserve partial logs when a run fails.
+- Task: Add storage-level tests for missing and partial log files.
 
-- Accepts RunSpec JSON.
-- Performs preflight validation.
-- Calls core run creation path.
-- Returns `{run_id, status}`.
-- Idempotent retry returns existing run with HTTP 200.
-- Idempotency conflict returns HTTP 409 with existing `run_id`.
+### Story 3.2: Expose Cursor-Based Log Polling
 
-#### Issue 4.2: Implement `GET /runs/{id}`
+- Let agents read logs incrementally without WebSockets.
+- Return stable cursors and bounded line batches for stdout or stderr.
+- This Story should gracefully handle missing logs and empty ranges.
 
-**Acceptance Criteria**
+**Tasks**
 
-- Returns full run record.
-- Includes submitted spec, resolved status, failure reason, timestamps, and artifact path.
-- Missing run returns 404.
+- Task: Implement `GET /runs/{id}/logs`.
+- Task: Support `stream=stdout|stderr`, `cursor`, and `limit`.
+- Task: Return `next_cursor` and `lines` in a machine-readable response.
 
-#### Issue 4.3: Implement `GET /projects/{id}/runs`
+### Story 3.3: Serve Artifact Downloads Safely
 
-**Acceptance Criteria**
+- Allow agents to download run artifacts through the API.
+- Reject path traversal and return predictable 404 responses for missing files.
+- This Story depends on the local storage namespace from Epic 2.
 
-- Lists recent runs for a project.
-- Supports a documented default limit.
-- Results are ordered by creation time descending.
+**Tasks**
 
-#### Issue 4.4: Standardize API errors
+- Task: Implement `GET /artifacts/{run_id}/{path}`.
+- Task: Normalize and validate requested artifact paths.
+- Task: Test missing file and traversal attempts.
 
-**Acceptance Criteria**
+### Story 3.4: Verify Required Artifact Bundles
 
-- Validation errors are machine-readable.
-- Errors include `status`, `reason`, and `next_action_hint` where appropriate.
-- Tests cover 400, 404, and 409 responses.
+- Validate the minimum platform artifact contract after execution.
+- Treat missing required container outputs as trainer failures while preserving partial outputs.
+- This Story should validate only platform-required `metrics.json` fields, not preset-specific extras.
 
----
+**Tasks**
 
-## Epic 5: Scheduler & Execution Planning
-
-Implement simple FIFO scheduling and produce immutable execution plans.
-
-The scheduler owns the run lifecycle orchestration. It promotes a run from `queued` to `preparing`, coordinates preparation work, then transitions the run to `running` only after the image, assets, mounts, and execution plan are ready.
-
-During `preparing`:
-
-1. Runtime image ensure runs first.
-2. Asset staging resolves models and datasets.
-3. `ExecutionPlan` is finalized with concrete GPU and mount bindings.
-4. Any preparation failure transitions the run to `failed` with the mapped `failure_reason`.
-5. Successful preparation transitions the run to `running`.
-
-### Issues
-
-#### Issue 5.1: Define `ExecutionIntent`
-
-**Acceptance Criteria**
-
-- Contains logical run information only.
-- Does not include Docker types.
-- Does not include concrete GPU index.
-- Does not include host paths.
-
-#### Issue 5.2: Define `ExecutionPlan`
-
-**Acceptance Criteria**
-
-- Contains assigned GPU index.
-- Contains concrete mount paths.
-- Contains final environment and command.
-- Contains temp work/log directories.
-
-#### Issue 5.3: Implement two-GPU allocator
-
-**Acceptance Criteria**
-
-- At most two runs may have an assigned GPU at the same time.
-- The first free GPU is assigned, with GPU 0 preferred when both GPUs are free.
-- Queued runs do not consume GPUs.
-- Assigned GPU is recorded.
-
-#### Issue 5.4: Implement FIFO scheduler loop
-
-**Acceptance Criteria**
-
-- New runs enter `queued`.
-- Scheduler promotes eligible runs to `preparing`.
-- Scheduler invokes preparation steps in the documented order.
-- Preparation failures transition the run to `failed` with the appropriate `failure_reason`.
-- Successful preparation transitions the run to `running`.
-- Failed runs are never retried automatically.
-- Unit tests cover queue ordering.
-
-#### Issue 5.5: Add fake executor integration
-
-**Acceptance Criteria**
-
-- Scheduler can drive a run from `queued` to terminal state using a fake runtime.
-- Success path produces `succeeded`.
-- Failure path records expected `failure_reason`.
-- This can run in CI without Docker or GPU.
+- Task: Verify required files and platform audit copies.
+- Task: Validate the platform minimum `metrics.json` schema.
+- Task: Verify container-emitted `spec.yaml` and `resolved_config.yaml` when practical.
 
 ---
 
-## Epic 6: Runtime Interface & Docker Adapter
+## Epic 4: Execute Runs Through Docker With GPU Assignment
 
-Attach Docker behind a narrow runtime interface without leaking Docker concerns upward.
+- **Goal**: Replace fake execution with Docker-backed runtime materialization.
+- **Why**: Docker is the Phase 0 execution substrate, but it must stay behind the runtime interface.
+- **Done when**: A prepared `ExecutionPlan` can run in Docker with exactly one assigned GPU.
 
-This epic starts with a fake runtime so scheduler and API integration can be tested before Docker or GPU availability.
+### Story 4.1: Ensure Docker Images During Preparation
 
-### Issues
+- Check local image availability and pull when needed before assets or containers are materialized.
+- Map image pull failures into the platform failure taxonomy.
+- This Story belongs to `preparing`, not `running`.
 
-#### Issue 6.1: Define runtime interface
+**Tasks**
 
-**Acceptance Criteria**
+- Task: Check whether the runtime image is already present.
+- Task: Pull missing images.
+- Task: Map pull failures to `image_pull_failed`.
 
-- Interface includes image ensure, create, start, wait, inspect, remove, and stream logs.
-- Upper layers depend on the interface only.
-- Docker SDK types do not appear in scheduler, preset, or API packages.
+### Story 4.2: Materialize Container Lifecycle From ExecutionPlan
 
-#### Issue 6.2: Implement fake runtime
+- Create, start, wait, inspect, and remove containers from immutable execution plans.
+- Keep scheduler and API code unaware of Docker SDK types.
+- This Story should prove lifecycle behavior with adapter-level tests where possible.
 
-**Acceptance Criteria**
+**Tasks**
 
-- Fake runtime supports deterministic success and failure paths.
-- Used by scheduler and API integration tests.
-- Can simulate wait results and log streams.
-- Can simulate `preparing` work without requiring Docker images, HF assets, or GPUs.
+- Task: Create containers from `ExecutionPlan`.
+- Task: Start containers and wait for exit.
+- Task: Inspect results and remove containers after completion.
 
-#### Issue 6.3: Implement Docker image ensure
+### Story 4.3: Enforce GPU Materialization Boundary
 
-**Acceptance Criteria**
+- Pass exactly one GPU index from the execution plan into the container.
+- Prevent the executor from choosing or mutating GPU assignment.
+- This Story protects scheduler ownership of resource allocation.
 
-- Checks local image presence.
-- Pulls image when needed.
-- Runs during the `preparing` phase before asset staging and container start.
-- Pull failure maps to `image_pull_failed`.
+**Tasks**
 
-#### Issue 6.4: Implement Docker container lifecycle
+- Task: Translate assigned GPU index into Docker device/runtime configuration.
+- Task: Test that missing or multiple GPU assignments are rejected.
+- Task: Confirm terminal states release GPU assignment.
 
-**Acceptance Criteria**
+### Story 4.4: Map Runtime Failures to Failure Reasons
 
-- Creates container from `ExecutionPlan`.
-- Starts container.
-- Waits for exit.
-- Inspects result.
-- Removes container after completion.
+- Convert Docker and process failures into stable machine-readable failure reasons.
+- Keep unknown cases explicit instead of leaking raw runtime errors as public API behavior.
+- This Story completes the failure taxonomy for real execution.
 
-#### Issue 6.5: Implement GPU materialization
+**Tasks**
 
-**Acceptance Criteria**
-
-- Container receives exactly one GPU index.
-- GPU assignment comes from `ExecutionPlan`.
-- Executor does not choose GPU.
-
-#### Issue 6.6: Map runtime failures to failure taxonomy
-
-**Acceptance Criteria**
-
-- Image pull failure maps to `image_pull_failed`.
-- Container create failure maps to `container_create_failed`.
-- OOM maps to `oom`.
-- Non-zero trainer exit maps to `trainer_error`.
-- Timeout maps to `timeout`.
-- Unknown cases map to `unknown`.
+- Task: Map container create failure to `container_create_failed`.
+- Task: Map OOM, non-zero trainer exit, and timeout.
+- Task: Map unknown cases to `unknown`.
 
 ---
 
-## Epic 7: Local Storage, Logs, and Artifacts
+## Epic 5: Stage HF/Local Assets Before Execution
 
-Make every run inspectable without SSH access.
+- **Goal**: Resolve models and datasets before a run enters `running`.
+- **Why**: Asset failures should happen during `preparing`, before a trainer consumes GPU time.
+- **Done when**: Execution plans contain concrete staged paths and cache metadata is inspectable.
 
-This epic distinguishes platform-owned audit records from container-produced outputs:
+### Story 5.1: Stage Base Models
 
-- The platform writes `spec.yaml` and `resolved_config.yaml` before execution for reproducibility.
-- The artifact verifier checks the container output bundle after execution and validates the required contract.
+- Resolve HF model references through cache and verify local model paths.
+- Record cache hit or miss behavior in run metadata.
+- This Story should fail with `model_download_failed` before runtime start when staging fails.
 
-### Issues
+**Tasks**
 
-#### Issue 7.1: Implement local filesystem storage driver
+- Task: Normalize HF and local model references.
+- Task: Download or resolve models through `HF_HOME`.
+- Task: Record staged model path and cache status.
 
-**Acceptance Criteria**
+### Story 5.2: Stage Datasets
 
-- Supports write, read, and list operations.
-- Stores files under a project-aware namespace equivalent to `/artifacts/{project_id}/{run_id}/`.
-- Project namespacing behavior is documented.
-- All artifact paths include `project_id` as a path segment consistently.
-- No two runs from different projects can collide on the same artifact path.
-- Cross-project path traversal is prevented.
+- Resolve HF datasets or verify local dataset paths before execution.
+- Bind all staged datasets under `/workspace/data/`.
+- This Story should fail with `dataset_stage_failed` when data is unavailable.
 
-#### Issue 7.2: Persist platform audit copies of `spec.yaml` and `resolved_config.yaml`
+**Tasks**
 
-**Acceptance Criteria**
+- Task: Normalize HF and local dataset references.
+- Task: Download or resolve datasets through local cache.
+- Task: Add dataset mount or link bindings to `ExecutionPlan`.
 
-- The platform writes both files before execution starts.
-- These files record the submitted RunSpec and platform-resolved config, independent of trainer behavior.
-- In fake runtime mode, the platform still writes audit copies before marking the run `succeeded`.
-- Files are available through artifact download.
+### Story 5.3: Define HF Cache Directory Policy
 
-#### Issue 7.3: Implement log capture
+- Always set `HF_HOME` for predictable cache behavior.
+- Host-mount the cache directory into containers.
+- This Story makes cache location configurable without leaking policy into presets.
 
-**Acceptance Criteria**
+**Tasks**
 
-- Captures stdout and stderr separately.
-- Writes `stdout.log` and `stderr.log`.
-- Partial logs survive failed runs.
-- Initial implementation may use file-based logs; Docker stream buffering can be added behind the same log API.
+- Task: Add cache configuration.
+- Task: Inject `HF_HOME` into execution environment.
+- Task: Add cache mount bindings to execution plans.
 
-#### Issue 7.4: Implement `GET /runs/{id}/logs`
+### Story 5.4: Expose Staging Metadata on Runs
 
-**Acceptance Criteria**
+- Make staged paths, cache hits, and staging errors visible through run inspection.
+- Help agents diagnose preparation failures without reading host directories.
+- This Story extends the run record after staging behavior exists.
 
-- Supports `stream=stdout|stderr`.
-- Supports `cursor` and `limit`.
-- Returns `next_cursor` and `lines`.
-- Handles missing logs gracefully.
-- Uses cursor-based polling; no WebSocket is required.
+**Tasks**
 
-#### Issue 7.5: Implement `GET /artifacts/{run_id}/{path}`
-
-**Acceptance Criteria**
-
-- Downloads artifact files.
-- Rejects path traversal.
-- Returns 404 for missing artifact files.
-
-#### Issue 7.6: Implement artifact verifier
-
-**Acceptance Criteria**
-
-- Verifies required files.
-- Verifies platform audit copies from Issue 7.2 exist.
-- Validates only the platform minimum `metrics.json` schema.
-- Missing platform audit copies marks the run incomplete.
-- Missing required container outputs maps to `trainer_error`.
-- Partial outputs are preserved on failure.
-
-#### Issue 7.7: Verify container-emitted spec and resolved config
-
-**Acceptance Criteria**
-
-- Verifies `/workspace/output/spec.yaml` exists after container execution.
-- Verifies `/workspace/output/resolved_config.yaml` exists after container execution.
-- Compares container-emitted files with platform audit copies when practical.
-- Missing container-emitted files maps to `trainer_error`.
+- Task: Add staged asset metadata to run records.
+- Task: Surface staging errors through `GET /runs/{id}`.
+- Task: Test cache hit, cache miss, and staging failure metadata.
 
 ---
 
-## Epic 8: Asset Staging & HF Cache
+## Epic 6: Validate Phase 0 Preset Container Contracts
 
-Resolve models and datasets before training enters `running`.
+- **Goal**: Ensure required training presets produce the platform artifact contract.
+- **Why**: Presets are the supported product interface; containers must obey the same workspace contract.
+- **Done when**: Axolotl and Unsloth preset paths pass smoke and local end-to-end tests.
 
-This epic depends on execution planning and runtime mount semantics. It should bind staged asset paths into the `ExecutionPlan`; the executor should only materialize those bindings.
+### Story 6.1: Implement Axolotl LoRA SFT Contract
 
-Asset staging happens during the `preparing` phase, after runtime image ensure and before the run transitions to `running`.
+- Make the Axolotl preset consume platform-provided config, model, and data paths.
+- Write all required outputs under `/workspace/output/`.
+- This Story validates one concrete preset without generalizing container internals too early.
 
-### Issues
+**Tasks**
 
-#### Issue 8.1: Implement base model staging
+- Task: Consume `/workspace/resolved_config.yaml`.
+- Task: Read data from `/workspace/data/` and model from `/workspace/model/` or `HF_HOME`.
+- Task: Produce required artifact files under `/workspace/output/`.
 
-**Acceptance Criteria**
+### Story 6.2: Implement Unsloth LoRA SFT Contract
 
-- HF references download or resolve through `HF_HOME`.
-- Local references are verified before execution.
-- Cache hits are recorded in run metadata.
-- Download failure maps to `model_download_failed`.
+- Apply the same workspace and artifact contract to the Unsloth preset.
+- Support LoRA adapter output and optional merged output when requested.
+- This Story proves the preset abstraction supports more than one trainer backend.
 
-#### Issue 8.2: Implement dataset staging
+**Tasks**
 
-**Acceptance Criteria**
+- Task: Consume the same resolved config and mounted input layout.
+- Task: Produce LoRA adapter artifacts.
+- Task: Support optional merged model output.
 
-- HF datasets download or resolve through local cache.
-- Local dataset paths are verified.
-- All datasets are mounted or linked under `/workspace/data/`.
-- Failure maps to `dataset_stage_failed`.
+### Story 6.3: Add Preset Smoke Tests
 
-#### Issue 8.3: Implement cache directory policy
+- Run tiny fixtures or mocked trainer behavior to validate preset contracts quickly.
+- Verify platform-required outputs and minimum metrics schema.
+- This Story keeps preset-specific extra fields outside the platform verifier.
 
-**Acceptance Criteria**
+**Tasks**
 
-- `HF_HOME` is always set.
-- Cache path is host-mounted into the container.
-- Cache location is configurable.
+- Task: Add smoke fixtures or mocked trainer paths.
+- Task: Verify required output files.
+- Task: Verify preset-specific extra metrics separately from platform minimum metrics.
 
-#### Issue 8.4: Add staging metadata to run records
+### Story 6.4: Add End-to-End Local Run Test
 
-**Acceptance Criteria**
+- Exercise the full local path from RunSpec submission to downloadable artifacts.
+- Verify states, logs, artifacts, and reproducibility from stored config files.
+- This Story is the Phase 0 confidence test after Docker, staging, and preset contracts exist.
 
-- Run metadata records staged asset paths.
-- Cache hit/miss is inspectable.
-- Staging errors are visible through `GET /runs/{id}`.
+**Tasks**
 
----
-
-## Epic 9: Phase 0 Preset Container Contracts
-
-Make the required training presets produce the platform artifact contract.
-
-### Issues
-
-#### Issue 9.1: Implement Axolotl LoRA SFT preset contract
-
-**Acceptance Criteria**
-
-- Consumes `/workspace/resolved_config.yaml`.
-- Reads data from `/workspace/data/`.
-- Uses base model from `/workspace/model/` or `HF_HOME`.
-- Writes outputs under `/workspace/output/`.
-- Produces required artifact files.
-
-#### Issue 9.2: Implement Unsloth LoRA SFT preset contract
-
-**Acceptance Criteria**
-
-- Same contract as Axolotl preset.
-- Produces LoRA adapter when requested.
-- Supports optional merged output when requested.
-
-#### Issue 9.3: Add preset smoke tests
-
-**Acceptance Criteria**
-
-- Smoke tests can run with tiny fixtures or mocked trainer behavior.
-- Verifies required outputs.
-- Verifies platform minimum `metrics.json` schema.
-- Verifies any preset-specific extra fields separately from the platform verifier.
-
-#### Issue 9.4: Add end-to-end local run test
-
-**Acceptance Criteria**
-
-- Submit a RunSpec.
-- Run moves through expected states.
-- Logs are queryable.
-- Artifacts are downloadable.
-- Final run is reproducible from stored `spec.yaml` and `resolved_config.yaml`.
+- Task: Submit a valid RunSpec and wait for terminal state.
+- Task: Query logs and download artifacts.
+- Task: Reproduce the final run from stored `spec.yaml` and `resolved_config.yaml`.
 
 ---
 
-## Suggested First Vertical Slice
+## First Vertical Slice
 
-The first implementation milestone should avoid Docker and real GPU execution.
+- **Goal**: Submit a RunSpec and drive it to `succeeded` using the fake runtime.
+- **Included Stories**: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, and 2.4.
+- **Excluded for now**: project run listing, log polling, artifact verifier, Docker, asset staging, and real preset containers.
 
-### Goal
-
-Submit a RunSpec and drive it to `succeeded` using a fake executor.
-
-### Included Issues
-
-**Core domain**
-
-- Issue 2.1: Add core run domain types
-- Issue 2.2: Implement `run_` ULID generation
-- Issue 2.3: Add SQLite schema and migrations
-- Issue 2.4: Implement run repository
-- Issue 2.5: Implement state transition guard
-
-**Preset and validation**
-
-- Issue 3.1: Add preset registry
-- Issue 3.2: Add Phase 0 preset definitions
-- Issue 3.3: Implement RunSpec preflight validation
-- Issue 3.5: Implement resolved config generation
-
-**API surface**
-
-- Issue 4.1: Implement `POST /runs`
-- Issue 4.2: Implement `GET /runs/{id}`
-- Issue 4.4: Standardize API errors
-
-**Execution planning**
-
-- Issue 5.1: Define `ExecutionIntent`
-- Issue 5.2: Define `ExecutionPlan`
-- Issue 5.4: Implement FIFO scheduler loop
-- Issue 6.1: Define runtime interface
-- Issue 6.2: Implement fake runtime
-- Issue 5.5: Add fake executor integration
-
-**Artifact audit trail**
-
-- Issue 7.1: Implement local filesystem storage driver
-- Issue 7.2: Persist platform audit copies of `spec.yaml` and `resolved_config.yaml`
-
-Artifact completeness verification through Issue 7.6 is not required for this slice. The slice only requires platform audit copies to exist before a fake-runtime success is recorded.
-
-In fake runtime mode, image ensure and asset staging are simulated no-op preparation steps. The scheduler still exercises `queued -> preparing -> running -> succeeded` transitions.
-
-### Why This Slice
-
-It proves the product contract before GPU, Docker, or trainer-specific complexity enters the system.
-
-Once this slice works, Docker and asset staging become replaceable execution details rather than the foundation of the architecture.
+This slice proves the product contract before GPU, Docker, or trainer-specific complexity enters the system.
