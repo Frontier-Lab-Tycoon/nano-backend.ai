@@ -13,6 +13,21 @@ Post-implementation submission pipeline: quality enforcement, learning notes, co
 - **issue** (optional): GitHub issue number (e.g., `#12` or `12`). Auto-detected from branch name if pattern `issue-\d+` exists.
 - **base_branch** (optional): Target branch for PR. Defaults to `main`.
 
+## Repository Target Rule
+
+This workspace is the `Frontier-Lab-Tycoon/nano-backend.ai` fork. All push and PR operations for this repository MUST target the fork, not upstream.
+
+- Required push remote: `origin` → `https://github.com/Frontier-Lab-Tycoon/nano-backend.ai.git`
+- Required PR repo: `Frontier-Lab-Tycoon/nano-backend.ai`
+- Upstream `seedspirit/nano-backend.ai` may be used only for fetch/compare context, never as the PR creation target.
+- Before creating a PR, verify:
+  ```bash
+  git remote get-url origin
+  gh repo view Frontier-Lab-Tycoon/nano-backend.ai --json nameWithOwner,defaultBranchRef
+  gh pr list --repo Frontier-Lab-Tycoon/nano-backend.ai --head <branch> --json number,title,url,isDraft
+  ```
+- Always pass `--repo Frontier-Lab-Tycoon/nano-backend.ai` to `gh pr create`, `gh pr view`, and `gh pr list` during submit.
+
 ## Workflow
 
 ### Phase 1: Pre-flight
@@ -212,6 +227,17 @@ Backend.AI's Manager/Agent/Storage structure, session lifecycle, API design, dom
    ```
 
 2. **Create PR**
+
+   Use the fork repository explicitly:
+
+   ```bash
+   gh pr create \
+     --repo Frontier-Lab-Tycoon/nano-backend.ai \
+     --head "{branch_name}" \
+     --base "{base_branch}" \
+     --draft \
+     ...
+   ```
 
    If a linked issue exists, the PR body must include the issue context and how it was resolved:
 

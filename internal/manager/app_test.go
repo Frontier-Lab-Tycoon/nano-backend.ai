@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/seedspirit/nano-backend.ai/internal/common"
+	"github.com/seedspirit/nano-backend.ai/internal/common/response"
 )
 
 func TestHealthReturns200OK(t *testing.T) {
@@ -20,7 +20,7 @@ func TestHealthReturns200OK(t *testing.T) {
 		t.Errorf("got status %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	var resp common.APIResponse
+	var resp response.Response
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}

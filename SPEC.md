@@ -11,7 +11,7 @@ Hard constraints:
 - Single node, 2× RTX 3090
 - Single-GPU jobs only (no distributed training)
 - Declarative submission via preset + overrides
-- Every run must leave a complete, inspectable artifact bundle
+- Every run must leave a complete, inspectable artifact set
 
 ## 2. Core Objects
 
@@ -20,7 +20,7 @@ Hard constraints:
 | **Project** | A namespace for related runs (e.g. `mergeowl`). |
 | **Run** | One execution of a fine-tuning job, fully specified by a RunSpec. |
 | **Preset** | A validated trainer template (image, defaults, allowed overrides). |
-| **Artifact** | Immutable output bundle produced by a run. |
+| **ArtifactIndex** | Platform-maintained index of files produced by a run. |
 | **Asset** | External reference to a model or dataset (HF Hub URI, local path). |
 
 ## 3. RunSpec
@@ -28,27 +28,29 @@ Hard constraints:
 A Run is created by submitting a RunSpec. The platform merges the chosen preset with user overrides to produce a resolved config.
 
 ```yaml
-project_id: mergeowl
-preset: axolotl-lora-sft
-base_model: unsloth/Llama-3.1-8B
-datasets:
-  - path: mergeowl/v1
-    split: train
-overrides:
-  learning_rate: 2.0e-4
-  num_epochs: 3
-  lora_r: 32
-  max_seq_length: 4096
-resources:
-  gpu: 1
-  memory: 32g
-  timeout: 4h
-outputs:
-  save_adapter: true
-  save_merged: false
-lineage:
-  git_sha: abc123
-  source_thread: discord://...
+project_id: 4e78df8a-bdb7-41e8-92d7-a1a9f26fd90c
+name: mergeowl-exp-42
+description: LoRA SFT experiment for MergeOwl v1
+model_options:
+  base_model: unsloth/Llama-3.1-8B
+data_options:
+  datasets:
+    - path: mergeowl/v1
+      split: train
+resource_options:
+  gpu:
+    count: 1
+  memory:
+    limit_bytes: 34359738368
+  timeout:
+    duration_seconds: 14400
+training_options:
+  overrides:
+    preset: axolotl-lora-sft
+    learning_rate: 2.0e-4
+    num_epochs: 3
+    lora_r: 32
+    max_seq_length: 4096
 idempotency_key: mergeowl-exp-42   # optional, prevents duplicate submissions
 ```
 
@@ -56,15 +58,16 @@ idempotency_key: mergeowl-exp-42   # optional, prevents duplicate submissions
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `project_id` | yes | Target project. |
-| `preset` | yes | Preset name. Must exist in the preset registry. |
-| `base_model` | yes | HF Hub model ID or local asset URI. |
-| `datasets` | yes | List of dataset references. |
-| `overrides` | no | Key-value overrides validated against preset schema. |
-| `resources` | yes | `gpu`, `memory`, `timeout`. |
-| `outputs` | no | What to save (adapter, merged weights, metrics, report). |
-| `lineage` | no | Traceability metadata (git sha, issue/PR/thread). |
+| `project_id` | yes | Target project UUID. Human-friendly lookup can be provided by CLI/search. |
+| `name` | yes | Human-readable spec name. |
+| `description` | no | Human-readable description. |
+| `model_options.base_model` | yes | HF Hub model ID or local asset URI. |
+| `data_options.datasets` | yes | List of dataset references. |
+| `resource_options` | yes | Requested `cpu`, `gpu`, `memory`, and `timeout` values. |
+| `training_options.overrides` | no | Key-value overrides validated against preset schema. Preset selection may live here until preset registry types are finalized. |
 | `idempotency_key` | no | Client-supplied key; duplicate returns existing run. |
+
+`outputs` and `lineage` are planned extension groups. They should be added when artifact policy and traceability requirements become concrete enough to avoid removing public fields later.
 
 ### 3.1 Dataset / Model Staging Contract
 
@@ -133,6 +136,17 @@ queued → preparing → running → succeeded
 | `running` | `failed` | Trainer, timeout, OOM, or artifact capture failed; `failure_reason` is required. |
 
 `succeeded` and `failed` are terminal in the MVP. Phase 2 will add cancellation semantics and the `cancelled` terminal state.
+
+### 4.0.2 Domain Transition API
+
+The Go domain model represents status changes with a `Transition` value:
+
+```go
+r.Transition(run.Next(run.Preparing), now)
+r.Transition(run.Fail("trainer_error"), now)
+```
+
+`Next` is used for ordinary transitions. `Fail` is the only constructor that attaches a `FailureReason`, so callers cannot accidentally attach failure metadata to non-failed statuses.
 
 ## 4.1 Execution & Runtime Architecture
 
@@ -250,7 +264,9 @@ This gives the agent a clear signal without parsing raw Docker stderr.
 
 ## 5. Failure Taxonomy
 
-Every failed run must record a machine-readable `failure_reason`:
+Every failed run must record a non-empty machine-readable `failure_reason`.
+
+The Go domain type intentionally starts with only `type FailureReason string`. Concrete constants should be added only when the corresponding behavior is implemented. The planned MVP reasons are:
 
 - `image_pull_failed`
 - `container_create_failed`
@@ -334,6 +350,8 @@ Every successful (or failed) run must write the following to its artifact direct
 
 **Rule:** if `spec.yaml` and `resolved_config.yaml` are missing, the run is considered incomplete.
 
+The platform tracks produced files with an `ArtifactIndex`: a base path plus file entries containing relative path, size, and checksum metadata. The filesystem remains the source of truth for file contents.
+
 ### 7.1 metrics.json Minimum Schema
 
 Every preset must produce a `metrics.json` with at minimum the following fields. Additional preset-specific fields are allowed but must not conflict with these keys.
@@ -415,7 +433,7 @@ A preset is not just a Docker image. It is a **behavioral contract** between the
 1. `resolved_config.yaml` mounted at `/workspace/resolved_config.yaml` (preset defaults + overrides merged).
 2. All `datasets` mounted or symlinked under `/workspace/data/`.
 3. Base model accessible at `/workspace/model/` (or via `HF_HOME` cache if using HF Hub inside the container).
-4. Output directory `/workspace/output/` writable; its contents become the artifact bundle.
+4. Output directory `/workspace/output/` writable; its contents become the artifact set indexed by the platform.
 
 **Outputs the container must produce**
 1. `/workspace/output/spec.yaml` — copy of the submitted spec.
@@ -423,8 +441,8 @@ A preset is not just a Docker image. It is a **behavioral contract** between the
 3. `/workspace/output/stdout.log` and `/workspace/output/stderr.log`.
 4. `/workspace/output/metrics.json` — must satisfy the minimum schema in Section 7.1.
 5. `/workspace/output/report.md` — human-readable summary (training time, final loss, hardware used).
-6. `/workspace/output/adapter/` — if `outputs.save_adapter: true`.
-7. `/workspace/output/merged/` — if `outputs.save_merged: true`.
+6. `/workspace/output/adapter/` — if adapter output is requested by the resolved preset/output policy.
+7. `/workspace/output/merged/` — if merged model output is requested by the resolved preset/output policy.
 
 If any required output is missing, the run transitions to `failed` with `failure_reason: trainer_error` and the platform captures whatever partial outputs exist.
 
@@ -436,19 +454,19 @@ MVP uses local filesystem only. The artifact store is behind a narrow driver int
 type StorageDriver interface {
     Write(runID, path string, r io.Reader) error
     Read(runID, path string) (io.ReadCloser, error)
-    List(runID string) ([]ArtifactInfo, error)
+    List(runID string) (ArtifactIndex, error)
 }
 ```
 
-## 10. Run IDs
+## 10. IDs
 
-Run IDs are **ULID** with a `run_` prefix:
+Project, Spec, and Run IDs are UUIDs in the initial Go domain model:
 
 ```
-run_01J8XYZ...
+4e78df8a-bdb7-41e8-92d7-a1a9f26fd90c
 ```
 
-Properties: short, sortable by creation time, URL-safe, easy for agents to copy and reference.
+UUIDs are stable, widely supported, and already used in the codebase. If agent-facing copyability becomes a problem, add CLI/search aliases or a wrapper type before changing persisted identity.
 
 ## 11. Database (SQLite)
 
@@ -464,16 +482,22 @@ CREATE TABLE projects (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE specs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    name TEXT NOT NULL,
+    description TEXT,
+    model_options TEXT NOT NULL,    -- JSON
+    data_options TEXT NOT NULL,     -- JSON
+    resource_options TEXT NOT NULL, -- JSON
+    training_options TEXT,          -- JSON
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE runs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
-    preset TEXT NOT NULL,
-    base_model TEXT NOT NULL,
-    datasets TEXT NOT NULL,        -- JSON
-    overrides TEXT,                -- JSON
-    resources TEXT NOT NULL,       -- JSON
-    outputs TEXT,                  -- JSON
-    lineage TEXT,                  -- JSON
+    spec_id TEXT NOT NULL REFERENCES specs(id),
     status TEXT NOT NULL,
     failure_reason TEXT,
     artifact_path TEXT,

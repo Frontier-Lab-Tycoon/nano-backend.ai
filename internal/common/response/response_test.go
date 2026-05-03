@@ -1,15 +1,15 @@
-package common
+package response
 
 import (
 	"encoding/json"
 	"testing"
 )
 
-func TestNewAPIResponseSetsAllFields(t *testing.T) {
-	resp := NewAPIResponse("healthy", "service is running", "proceed with requests")
+func TestNewSetsAllFields(t *testing.T) {
+	resp := New("healthy", "service is running", "proceed with requests")
 
 	if resp.Status != "healthy" {
-		t.Errorf("got status %q, want %q", resp.Status, APIStatus("healthy"))
+		t.Errorf("got status %q, want %q", resp.Status, Status("healthy"))
 	}
 	if resp.Reason != "service is running" {
 		t.Errorf("got reason %q, want %q", resp.Reason, "service is running")
@@ -19,24 +19,24 @@ func TestNewAPIResponseSetsAllFields(t *testing.T) {
 	}
 }
 
-func TestOKResponseSetsStatusToOK(t *testing.T) {
-	resp := OKResponse("done", "continue")
+func TestOKSetsStatusToOK(t *testing.T) {
+	resp := OK("done", "continue")
 
 	if resp.Status != StatusOK {
 		t.Errorf("got status %q, want %q", resp.Status, StatusOK)
 	}
 }
 
-func TestErrorResponseSetsStatusToError(t *testing.T) {
-	resp := ErrorResponse("failed", "retry later")
+func TestErrSetsStatusToError(t *testing.T) {
+	resp := Err("failed", "retry later")
 
 	if resp.Status != StatusError {
 		t.Errorf("got status %q, want %q", resp.Status, StatusError)
 	}
 }
 
-func TestAPIResponseSerializesToJSON(t *testing.T) {
-	resp := NewAPIResponse(StatusOK, "all good", "send requests")
+func TestResponseSerializesToJSON(t *testing.T) {
+	resp := New(StatusOK, "all good", "send requests")
 
 	data, err := json.Marshal(resp)
 	if err != nil {
@@ -59,10 +59,10 @@ func TestAPIResponseSerializesToJSON(t *testing.T) {
 	}
 }
 
-func TestAPIResponseDeserializesFromJSON(t *testing.T) {
+func TestResponseDeserializesFromJSON(t *testing.T) {
 	input := `{"status":"ok","reason":"done","next_action_hint":"proceed"}`
 
-	var resp APIResponse
+	var resp Response
 	if err := json.Unmarshal([]byte(input), &resp); err != nil {
 		t.Fatalf("unexpected unmarshal error: %v", err)
 	}

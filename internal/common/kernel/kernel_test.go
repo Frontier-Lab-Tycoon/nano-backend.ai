@@ -1,4 +1,4 @@
-package common
+package kernel
 
 import (
 	"encoding/json"
@@ -6,33 +6,32 @@ import (
 	"testing"
 )
 
-func TestNewKernelIDGeneratesUniqueIDs(t *testing.T) {
-	a := NewKernelID()
-	b := NewKernelID()
+func TestNewIDGeneratesUniqueIDs(t *testing.T) {
+	a := NewID()
+	b := NewID()
 
 	if a.String() == b.String() {
 		t.Errorf("expected unique IDs, got %q and %q", a, b)
 	}
 }
 
-func TestNewKernelIDIsNotZero(t *testing.T) {
-	id := NewKernelID()
+func TestNewIDIsNotZero(t *testing.T) {
+	id := NewID()
 	if id.IsZero() {
-		t.Error("expected non-zero KernelID from NewKernelID()")
+		t.Error("expected non-zero ID from NewID()")
 	}
 }
 
-func TestKernelIDZeroValue(t *testing.T) {
-	var id KernelID
+func TestIDZeroValue(t *testing.T) {
+	var id ID
 	if !id.IsZero() {
-		t.Error("expected zero-value KernelID to be zero")
+		t.Error("expected zero-value ID to be zero")
 	}
 }
 
-func TestParseKernelIDValid(t *testing.T) {
-	// Generate a valid UUID string via NewKernelID
-	original := NewKernelID()
-	parsed, err := ParseKernelID(original.String())
+func TestParseIDValid(t *testing.T) {
+	original := NewID()
+	parsed, err := ParseID(original.String())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,50 +40,50 @@ func TestParseKernelIDValid(t *testing.T) {
 	}
 }
 
-func TestParseKernelIDInvalid(t *testing.T) {
-	_, err := ParseKernelID("not-a-uuid")
+func TestParseIDInvalid(t *testing.T) {
+	_, err := ParseID("not-a-uuid")
 	if err == nil {
 		t.Fatal("expected error for invalid UUID string")
 	}
-	if !errors.Is(err, ErrInvalidKernelID) {
-		t.Errorf("expected ErrInvalidKernelID, got %v", err)
+	if !errors.Is(err, ErrInvalidID) {
+		t.Errorf("expected ErrInvalidID, got %v", err)
 	}
 }
 
-func TestParseKernelIDEmpty(t *testing.T) {
-	_, err := ParseKernelID("")
+func TestParseIDEmpty(t *testing.T) {
+	_, err := ParseID("")
 	if err == nil {
 		t.Fatal("expected error for empty string")
 	}
-	if !errors.Is(err, ErrInvalidKernelID) {
-		t.Errorf("expected ErrInvalidKernelID, got %v", err)
+	if !errors.Is(err, ErrInvalidID) {
+		t.Errorf("expected ErrInvalidID, got %v", err)
 	}
 }
 
-func TestKernelIDEquality(t *testing.T) {
-	id := NewKernelID()
-	a, _ := ParseKernelID(id.String())
-	b, _ := ParseKernelID(id.String())
+func TestIDEquality(t *testing.T) {
+	id := NewID()
+	a, _ := ParseID(id.String())
+	b, _ := ParseID(id.String())
 
 	if a != b {
 		t.Errorf("expected %q == %q", a, b)
 	}
 
-	c := NewKernelID()
+	c := NewID()
 	if a == c {
 		t.Errorf("expected %q != %q", a, c)
 	}
 }
 
-func TestKernelIDJSONRoundtrip(t *testing.T) {
-	original := NewKernelID()
+func TestIDJSONRoundtrip(t *testing.T) {
+	original := NewID()
 
 	data, err := json.Marshal(original)
 	if err != nil {
 		t.Fatalf("unexpected marshal error: %v", err)
 	}
 
-	var decoded KernelID
+	var decoded ID
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unexpected unmarshal error: %v", err)
 	}
@@ -94,23 +93,23 @@ func TestKernelIDJSONRoundtrip(t *testing.T) {
 	}
 }
 
-func TestKernelIDJSONInvalid(t *testing.T) {
-	var id KernelID
+func TestIDJSONInvalid(t *testing.T) {
+	var id ID
 	err := json.Unmarshal([]byte(`"not-a-uuid"`), &id)
 	if err == nil {
 		t.Fatal("expected error for invalid UUID in JSON")
 	}
 }
 
-func TestKernelSpecSerialize(t *testing.T) {
-	spec := KernelSpec{Command: []string{"python", "-c", "print('hello')"}}
+func TestSpecSerialize(t *testing.T) {
+	spec := Spec{Command: []string{"python", "-c", "print('hello')"}}
 
 	data, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatalf("unexpected marshal error: %v", err)
 	}
 
-	var decoded KernelSpec
+	var decoded Spec
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unexpected unmarshal error: %v", err)
 	}
@@ -123,10 +122,10 @@ func TestKernelSpecSerialize(t *testing.T) {
 	}
 }
 
-func TestKernelSpecDeserialize(t *testing.T) {
+func TestSpecDeserialize(t *testing.T) {
 	input := `{"command":["echo","hello"]}`
 
-	var spec KernelSpec
+	var spec Spec
 	if err := json.Unmarshal([]byte(input), &spec); err != nil {
 		t.Fatalf("unexpected unmarshal error: %v", err)
 	}
@@ -139,7 +138,7 @@ func TestKernelSpecDeserialize(t *testing.T) {
 	}
 }
 
-func TestKernelStatusRunningRoundtrip(t *testing.T) {
+func TestStatusRunningRoundtrip(t *testing.T) {
 	status := Running()
 
 	data, err := json.Marshal(status)
@@ -147,7 +146,7 @@ func TestKernelStatusRunningRoundtrip(t *testing.T) {
 		t.Fatalf("unexpected marshal error: %v", err)
 	}
 
-	var decoded KernelStatus
+	var decoded Status
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unexpected unmarshal error: %v", err)
 	}
@@ -157,7 +156,7 @@ func TestKernelStatusRunningRoundtrip(t *testing.T) {
 	}
 }
 
-func TestKernelStatusExitedRoundtrip(t *testing.T) {
+func TestStatusExitedRoundtrip(t *testing.T) {
 	status := Exited(42)
 
 	data, err := json.Marshal(status)
@@ -165,7 +164,7 @@ func TestKernelStatusExitedRoundtrip(t *testing.T) {
 		t.Fatalf("unexpected marshal error: %v", err)
 	}
 
-	var decoded KernelStatus
+	var decoded Status
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unexpected unmarshal error: %v", err)
 	}
@@ -178,7 +177,7 @@ func TestKernelStatusExitedRoundtrip(t *testing.T) {
 	}
 }
 
-func TestKernelStatusFailedRoundtrip(t *testing.T) {
+func TestStatusFailedRoundtrip(t *testing.T) {
 	status := Failed("out of memory")
 
 	data, err := json.Marshal(status)
@@ -186,7 +185,7 @@ func TestKernelStatusFailedRoundtrip(t *testing.T) {
 		t.Fatalf("unexpected marshal error: %v", err)
 	}
 
-	var decoded KernelStatus
+	var decoded Status
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unexpected unmarshal error: %v", err)
 	}
@@ -199,12 +198,12 @@ func TestKernelStatusFailedRoundtrip(t *testing.T) {
 	}
 }
 
-func TestKernelErrorNotFound(t *testing.T) {
-	id := NewKernelID()
-	err := &KernelError{Op: "status", ID: id, Err: ErrKernelNotFound}
+func TestErrorNotFound(t *testing.T) {
+	id := NewID()
+	err := &Error{Op: "status", ID: id, Err: ErrNotFound}
 
-	if !errors.Is(err, ErrKernelNotFound) {
-		t.Errorf("expected errors.Is(err, ErrKernelNotFound) to be true")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected errors.Is(err, ErrNotFound) to be true")
 	}
 
 	want := "kernel status " + id.String() + ": kernel not found"
@@ -213,12 +212,12 @@ func TestKernelErrorNotFound(t *testing.T) {
 	}
 }
 
-func TestKernelErrorAlreadyExists(t *testing.T) {
-	id := NewKernelID()
-	err := &KernelError{Op: "create", ID: id, Err: ErrKernelAlreadyExists}
+func TestErrorAlreadyExists(t *testing.T) {
+	id := NewID()
+	err := &Error{Op: "create", ID: id, Err: ErrAlreadyExists}
 
-	if !errors.Is(err, ErrKernelAlreadyExists) {
-		t.Errorf("expected errors.Is(err, ErrKernelAlreadyExists) to be true")
+	if !errors.Is(err, ErrAlreadyExists) {
+		t.Errorf("expected errors.Is(err, ErrAlreadyExists) to be true")
 	}
 
 	want := "kernel create " + id.String() + ": kernel already exists"
@@ -227,11 +226,11 @@ func TestKernelErrorAlreadyExists(t *testing.T) {
 	}
 }
 
-func TestKernelErrorRuntime(t *testing.T) {
-	err := &KernelError{Op: "create", Err: ErrKernelRuntime}
+func TestErrorRuntime(t *testing.T) {
+	err := &Error{Op: "create", Err: ErrRuntime}
 
-	if !errors.Is(err, ErrKernelRuntime) {
-		t.Errorf("expected errors.Is(err, ErrKernelRuntime) to be true")
+	if !errors.Is(err, ErrRuntime) {
+		t.Errorf("expected errors.Is(err, ErrRuntime) to be true")
 	}
 
 	want := "kernel create: kernel runtime error"
@@ -240,11 +239,10 @@ func TestKernelErrorRuntime(t *testing.T) {
 	}
 }
 
-func TestKernelErrorWithZeroID(t *testing.T) {
-	var zeroID KernelID
-	err := &KernelError{Op: "destroy", ID: zeroID, Err: ErrKernelNotFound}
+func TestErrorWithZeroID(t *testing.T) {
+	var zeroID ID
+	err := &Error{Op: "destroy", ID: zeroID, Err: ErrNotFound}
 
-	// Zero ID should be omitted from error message
 	want := "kernel destroy: kernel not found"
 	if err.Error() != want {
 		t.Errorf("got %q, want %q", err.Error(), want)

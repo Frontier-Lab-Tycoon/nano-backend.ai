@@ -6,21 +6,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/seedspirit/nano-backend.ai/internal/common"
+	"github.com/seedspirit/nano-backend.ai/internal/common/kernel"
 )
 
 func TestCreateSuccess(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	id, err := lp.Create(ctx, common.KernelSpec{Command: []string{"sleep", "3600"}})
+	id, err := lp.Create(ctx, kernel.Spec{Command: []string{"sleep", "3600"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	t.Cleanup(func() { _ = lp.Destroy(ctx, id) })
 
 	if id.IsZero() {
-		t.Error("expected non-zero KernelID")
+		t.Error("expected non-zero kernel ID")
 	}
 }
 
@@ -28,11 +28,11 @@ func TestCreateReturnsUniqueIDs(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	id1, err := lp.Create(ctx, common.KernelSpec{Command: []string{"sleep", "3600"}})
+	id1, err := lp.Create(ctx, kernel.Spec{Command: []string{"sleep", "3600"}})
 	if err != nil {
 		t.Fatalf("unexpected error on first create: %v", err)
 	}
-	id2, err := lp.Create(ctx, common.KernelSpec{Command: []string{"sleep", "3600"}})
+	id2, err := lp.Create(ctx, kernel.Spec{Command: []string{"sleep", "3600"}})
 	if err != nil {
 		t.Fatalf("unexpected error on second create: %v", err)
 	}
@@ -51,17 +51,17 @@ func TestCreateEmptyCommand(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	_, err := lp.Create(ctx, common.KernelSpec{Command: []string{}})
+	_, err := lp.Create(ctx, kernel.Spec{Command: []string{}})
 	if err == nil {
 		t.Fatal("expected error for empty command")
 	}
-	if !errors.Is(err, common.ErrKernelRuntime) {
-		t.Errorf("expected ErrKernelRuntime, got %v", err)
+	if !errors.Is(err, kernel.ErrRuntime) {
+		t.Errorf("expected kernel.ErrRuntime, got %v", err)
 	}
 
-	var ke *common.KernelError
+	var ke *kernel.Error
 	if !errors.As(err, &ke) {
-		t.Fatalf("expected *KernelError, got %T", err)
+		t.Fatalf("expected *kernel.Error, got %T", err)
 	}
 	if ke.Op != "create" {
 		t.Errorf("expected op %q, got %q", "create", ke.Op)
@@ -72,12 +72,12 @@ func TestCreateNonexistentBinary(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	_, err := lp.Create(ctx, common.KernelSpec{Command: []string{"nonexistent-binary-xyz-999"}})
+	_, err := lp.Create(ctx, kernel.Spec{Command: []string{"nonexistent-binary-xyz-999"}})
 	if err == nil {
 		t.Fatal("expected error for nonexistent binary")
 	}
-	if !errors.Is(err, common.ErrKernelRuntime) {
-		t.Errorf("expected ErrKernelRuntime, got %v", err)
+	if !errors.Is(err, kernel.ErrRuntime) {
+		t.Errorf("expected kernel.ErrRuntime, got %v", err)
 	}
 }
 
@@ -85,7 +85,7 @@ func TestDestroySuccess(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	id, err := lp.Create(ctx, common.KernelSpec{Command: []string{"sleep", "3600"}})
+	id, err := lp.Create(ctx, kernel.Spec{Command: []string{"sleep", "3600"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -99,18 +99,18 @@ func TestDestroyNotFound(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	fakeID := common.NewKernelID()
+	fakeID := kernel.NewID()
 	err := lp.Destroy(ctx, fakeID)
 	if err == nil {
 		t.Fatal("expected error for nonexistent ID")
 	}
-	if !errors.Is(err, common.ErrKernelNotFound) {
-		t.Errorf("expected ErrKernelNotFound, got %v", err)
+	if !errors.Is(err, kernel.ErrNotFound) {
+		t.Errorf("expected kernel.ErrNotFound, got %v", err)
 	}
 
-	var ke *common.KernelError
+	var ke *kernel.Error
 	if !errors.As(err, &ke) {
-		t.Fatalf("expected *KernelError, got %T", err)
+		t.Fatalf("expected *kernel.Error, got %T", err)
 	}
 	if ke.Op != "destroy" {
 		t.Errorf("expected op %q, got %q", "destroy", ke.Op)
@@ -124,7 +124,7 @@ func TestDestroyTwice(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	id, err := lp.Create(ctx, common.KernelSpec{Command: []string{"sleep", "3600"}})
+	id, err := lp.Create(ctx, kernel.Spec{Command: []string{"sleep", "3600"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -134,14 +134,14 @@ func TestDestroyTwice(t *testing.T) {
 	}
 
 	err = lp.Destroy(ctx, id)
-	if !errors.Is(err, common.ErrKernelNotFound) {
-		t.Errorf("expected ErrKernelNotFound on second destroy, got %v", err)
+	if !errors.Is(err, kernel.ErrNotFound) {
+		t.Errorf("expected kernel.ErrNotFound on second destroy, got %v", err)
 	}
 }
 
 // ── Helpers ───────────────────────────────────────────────────
 
-func waitForExited(t *testing.T, lp *LocalProcess, ctx context.Context, id common.KernelID) common.KernelStatus {
+func waitForExited(t *testing.T, lp *LocalProcess, ctx context.Context, id kernel.ID) kernel.Status {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -149,13 +149,13 @@ func waitForExited(t *testing.T, lp *LocalProcess, ctx context.Context, id commo
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if status.Type == common.StatusExited {
+		if status.Type == kernel.StatusExited {
 			return status
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("timeout waiting for process to exit")
-	return common.KernelStatus{}
+	return kernel.Status{}
 }
 
 // ── Status Tests ──────────────────────────────────────────────
@@ -164,7 +164,7 @@ func TestStatusRunningProcess(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	id, err := lp.Create(ctx, common.KernelSpec{Command: []string{"sleep", "3600"}})
+	id, err := lp.Create(ctx, kernel.Spec{Command: []string{"sleep", "3600"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -174,8 +174,8 @@ func TestStatusRunningProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status.Type != common.StatusRunning {
-		t.Errorf("got status %v, want %v", status.Type, common.StatusRunning)
+	if status.Type != kernel.StatusRunning {
+		t.Errorf("got status %v, want %v", status.Type, kernel.StatusRunning)
 	}
 }
 
@@ -183,7 +183,7 @@ func TestStatusExitedZero(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	id, err := lp.Create(ctx, common.KernelSpec{Command: []string{"true"}})
+	id, err := lp.Create(ctx, kernel.Spec{Command: []string{"true"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestStatusExitedNonZero(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	id, err := lp.Create(ctx, common.KernelSpec{Command: []string{"false"}})
+	id, err := lp.Create(ctx, kernel.Spec{Command: []string{"false"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -213,18 +213,18 @@ func TestStatusNotFound(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	fakeID := common.NewKernelID()
+	fakeID := kernel.NewID()
 	_, err := lp.Status(ctx, fakeID)
 	if err == nil {
 		t.Fatal("expected error for nonexistent ID")
 	}
-	if !errors.Is(err, common.ErrKernelNotFound) {
-		t.Errorf("expected ErrKernelNotFound, got %v", err)
+	if !errors.Is(err, kernel.ErrNotFound) {
+		t.Errorf("expected kernel.ErrNotFound, got %v", err)
 	}
 
-	var ke *common.KernelError
+	var ke *kernel.Error
 	if !errors.As(err, &ke) {
-		t.Fatalf("expected *KernelError, got %T", err)
+		t.Fatalf("expected *kernel.Error, got %T", err)
 	}
 	if ke.Op != "status" {
 		t.Errorf("expected op %q, got %q", "status", ke.Op)
@@ -238,7 +238,7 @@ func TestStatusAfterDestroy(t *testing.T) {
 	lp := NewLocalProcess()
 	ctx := context.Background()
 
-	id, err := lp.Create(ctx, common.KernelSpec{Command: []string{"sleep", "3600"}})
+	id, err := lp.Create(ctx, kernel.Spec{Command: []string{"sleep", "3600"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestStatusAfterDestroy(t *testing.T) {
 	}
 
 	_, err = lp.Status(ctx, id)
-	if !errors.Is(err, common.ErrKernelNotFound) {
-		t.Errorf("expected ErrKernelNotFound after destroy, got %v", err)
+	if !errors.Is(err, kernel.ErrNotFound) {
+		t.Errorf("expected kernel.ErrNotFound after destroy, got %v", err)
 	}
 }
