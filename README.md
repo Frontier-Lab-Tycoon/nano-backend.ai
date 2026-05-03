@@ -6,6 +6,14 @@ Phase 0 is intentionally narrow: it targets a single machine with 2x RTX 3090 GP
 
 See [`SPEC.md`](SPEC.md) for the full MVP contract.
 
+## Agent Guidance
+
+`CLAUDE.md` is the canonical agent instruction file for this repository. Agents
+that start from `AGENTS.md` should treat it as a pointer to `CLAUDE.md` and then
+follow the same shared rules.
+
+Use `.claude/skills/README.md` for the available project workflows and skills.
+
 ## MVP Goals
 
 - Accept declarative RunSpecs built from `preset + overrides`
@@ -72,7 +80,8 @@ Postgres, Redis, gRPC manager/agent separation, multi-node scheduling, and riche
 ## Project Layout
 
 ```text
-├── CLAUDE.md          # AI agent guidelines
+├── CLAUDE.md          # Canonical AI agent guidelines
+├── AGENTS.md          # Pointer for agents that read AGENTS.md first
 ├── cmd/               # Binary entry points
 ├── internal/          # Private packages
 ├── docs/              # Design, education, and learning notes
