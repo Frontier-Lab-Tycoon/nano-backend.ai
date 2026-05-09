@@ -70,23 +70,17 @@ func (r *RunRepository) CreateSpec(ctx context.Context, spec *run.Spec) error {
 	if spec == nil {
 		return errordef.Errorf(errordef.InvalidInput, "spec is nil")
 	}
-	row, err := record.NewSpec(spec)
+	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("begin create spec transaction: %w", err)
+	}
+	defer rollbackUnlessCommitted(tx)
+
+	if err := insertSpec(ctx, tx, spec); err != nil {
 		return err
 	}
-
-	_, err = r.db.NamedExecContext(ctx, `
-		INSERT INTO specs (
-			id, project_id, name, description, model_options, data_options,
-			resource_options, training_options, created_at
-		)
-		VALUES (
-			:id, :project_id, :name, :description, :model_options, :data_options,
-			:resource_options, :training_options, :created_at
-		)
-	`, row)
-	if err != nil {
-		return fmt.Errorf("create spec %s: %w", spec.ID, err)
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit create spec %s: %w", spec.ID, err)
 	}
 	return nil
 }
@@ -326,6 +320,9 @@ func insertSpec(ctx context.Context, tx *sqlx.Tx, spec *run.Spec) error {
 	if err != nil {
 		return fmt.Errorf("insert spec %s: %w", spec.ID, err)
 	}
+	if err := insertSpecPresetRefs(ctx, tx, spec.ID, spec.Presets); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -391,5 +388,61 @@ func getSpecByID(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (record.Spec, e
 	if err != nil {
 		return record.Spec{}, fmt.Errorf("get spec %s: %w", id, err)
 	}
+	refs, err := getSpecPresetRefs(ctx, tx, id)
+	if err != nil {
+		return record.Spec{}, err
+	}
+	row.PresetRefs = refs
 	return row, nil
+}
+
+func insertSpecPresetRefs(ctx context.Context, tx *sqlx.Tx, specID uuid.UUID, refs run.PresetRefs) error {
+	rows := []struct {
+		Category run.PresetCategory
+		PresetID *run.PresetID
+	}{
+		{Category: run.TrainerPreset, PresetID: refs.Trainer},
+		{Category: run.ResourcePreset, PresetID: refs.Resource},
+		{Category: run.OutputPreset, PresetID: refs.Output},
+	}
+	for _, row := range rows {
+		if row.PresetID == nil || *row.PresetID == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO spec_preset_refs (spec_id, category, preset_id)
+			VALUES (?, ?, ?)
+		`, specID.String(), string(row.Category), string(*row.PresetID)); err != nil {
+			return fmt.Errorf("insert spec preset ref %s %s: %w", specID, row.Category, err)
+		}
+	}
+	return nil
+}
+
+func getSpecPresetRefs(ctx context.Context, tx *sqlx.Tx, specID uuid.UUID) (run.PresetRefs, error) {
+	var rows []struct {
+		Category string `db:"category"`
+		PresetID string `db:"preset_id"`
+	}
+	if err := tx.SelectContext(ctx, &rows, `
+		SELECT category, preset_id
+		FROM spec_preset_refs
+		WHERE spec_id = ?
+	`, specID.String()); err != nil {
+		return run.PresetRefs{}, fmt.Errorf("get spec preset refs %s: %w", specID, err)
+	}
+
+	var refs run.PresetRefs
+	for _, row := range rows {
+		presetID := run.PresetID(row.PresetID)
+		switch run.PresetCategory(row.Category) {
+		case run.TrainerPreset:
+			refs.Trainer = &presetID
+		case run.ResourcePreset:
+			refs.Resource = &presetID
+		case run.OutputPreset:
+			refs.Output = &presetID
+		}
+	}
+	return refs, nil
 }

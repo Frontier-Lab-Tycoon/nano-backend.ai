@@ -10,7 +10,7 @@ nano-backend.ai MVP is not a generic job runner. It is a **preset-validated fine
 Hard constraints:
 - Single node, 2× RTX 3090
 - Single-GPU jobs only (no distributed training)
-- Declarative submission via preset + overrides
+- Declarative submission via preset refs + option parameters
 - Every run must leave a complete, inspectable artifact set
 
 ## 2. Core Objects
@@ -19,18 +19,20 @@ Hard constraints:
 |--------|-------------|
 | **Project** | A namespace for related runs (e.g. `mergeowl`). |
 | **Run** | One execution of a fine-tuning job, fully specified by a RunSpec. |
-| **Preset** | A validated trainer template (image, defaults, allowed overrides). |
+| **TrainerPreset** | A validated trainer contract (stable ID, runtime, defaults, option policy). |
 | **ArtifactIndex** | Platform-maintained index of files produced by a run. |
 | **Asset** | External reference to a model or dataset (HF Hub URI, local path). |
 
 ## 3. RunSpec
 
-A Run is created by submitting a RunSpec. The platform merges the chosen preset with user overrides to produce a resolved config.
+A Run is created by submitting a RunSpec. The platform validates the chosen preset refs and user option parameters, then produces an immutable `FinalizedRunSpec` with a structured `FinalizedTrainingConfig`.
 
 ```yaml
 project_id: 4e78df8a-bdb7-41e8-92d7-a1a9f26fd90c
 name: mergeowl-exp-42
 description: LoRA SFT experiment for MergeOwl v1
+preset_refs:
+  trainer: axolotl-lora-sft
 model_options:
   base_model: unsloth/Llama-3.1-8B
 data_options:
@@ -45,8 +47,7 @@ resource_options:
   timeout:
     duration_seconds: 14400
 training_options:
-  overrides:
-    preset: axolotl-lora-sft
+  parameters:
     learning_rate: 2.0e-4
     num_epochs: 3
     lora_r: 32
@@ -61,10 +62,13 @@ idempotency_key: mergeowl-exp-42   # optional, prevents duplicate submissions
 | `project_id` | yes | Target project UUID. Human-friendly lookup can be provided by CLI/search. |
 | `name` | yes | Human-readable spec name. |
 | `description` | no | Human-readable description. |
+| `preset_refs.trainer` | no | Optional stable trainer preset ID, such as `axolotl-lora-sft`. Required when using the Phase 0 preset-backed processor. |
+| `preset_refs.resource` | no | Optional resource preset ID for future resource default/policy bundles. |
+| `preset_refs.output` | no | Optional output preset ID for future artifact/output policy bundles. |
 | `model_options.base_model` | yes | HF Hub model ID or local asset URI. |
 | `data_options.datasets` | yes | List of dataset references. |
 | `resource_options` | yes | Requested `cpu`, `gpu`, `memory`, and `timeout` values. |
-| `training_options.overrides` | no | Key-value overrides validated against preset schema. Preset selection may live here until preset registry types are finalized. |
+| `training_options.parameters` | no | User-provided training parameters. For preset-backed submissions, these are validated against the selected trainer preset's `OptionPolicy`. |
 | `idempotency_key` | no | Client-supplied key; duplicate returns existing run. |
 
 `outputs` and `lineage` are planned extension groups. They should be added when artifact policy and traceability requirements become concrete enough to avoid removing public fields later.
@@ -100,10 +104,10 @@ This prevents an agent that retries after a network blip from accidentally spawn
 
 Canonical normalization must be deterministic across API, scheduler, and future entry points:
 
-- Apply default values before comparing specs.
+- Apply preset defaults before comparing finalized specs.
 - Normalize equivalent asset references where the platform defines an equivalence, such as bare HF IDs and `hf://` references.
 - Serialize maps in stable key order.
-- Do not include request bytes outside the normalized RunSpec in the comparison.
+- Do not include request bytes outside the canonical finalized data in the comparison.
 
 ## 4. State Machine
 
@@ -157,10 +161,10 @@ The platform treats Docker as a **runtime substrate**, not a user-facing abstrac
 Execution proceeds through two immutable data structures:
 
 1. **ExecutionIntent** (logical plan) — produced by the submit/queue layer.
-   - `run_id`, `preset`, `image_ref`, `env`, `command`
+   - `run_id`, `preset_refs`, `image_ref`, `env`, `command`
    - Required resources: `gpu: 1` (logical count, not index)
    - Required mounts: `workspace`, `artifacts`, `cache` (logical names)
-   - `resolved_config` path meaning (logical)
+   - finalized training config path meaning (logical; materialized as YAML only at the runtime boundary when needed)
    - Outputs contract
    - **No Docker types. No GPU index. No host path.**
 
@@ -180,7 +184,7 @@ The executor's `Create()` and `Start()` must **materialize only** — they do no
 | Layer | Knows Docker? | Responsibility |
 |-------|---------------|----------------|
 | Submit / Queue | No | Produce `ExecutionIntent` |
-| Preset / Resolve Config | No | Validate and merge config |
+| RunSpec Processor | No | Finalize a submitted RunSpec for one submission mode |
 | Scheduler / Allocator | No | Bind resources, produce `ExecutionPlan` |
 | Executor | Yes (adapter only) | Materialize `ExecutionPlan` via runtime interface |
 
@@ -300,7 +304,8 @@ Validation happens in two layers:
 - Reject immediately with 4xx for:
   - Missing required fields
   - Unknown preset
-  - Override keys outside `allowed_overrides`
+  - Parameter keys outside the preset `OptionPolicy`
+  - Parameter values that do not match the policy type or numeric range
   - Malformed asset URIs
 - This gives the agent fast failure without consuming queue or GPU capacity.
 
@@ -310,6 +315,15 @@ Validation happens in two layers:
   - Resource availability check (GPU count, memory).
 - The core is the single source of truth for run creation rules.
 - New entry points (CLI, batch submitter, future k8s controller) must route through the same core validator.
+
+**RunSpec processing**
+- `runspec.Processor` is the common interface for finalizing one submission mode.
+- `runspec.PresetBackedProcessor` implements preset-backed processing: preset lookup, validation, and finalization.
+- `runspec.PresetBackedProcessor` depends on `PresetRegistry` and `runspec.Validator` interfaces rather than concrete implementations.
+- `runspec.Validator` validates only; it does not merge defaults or produce finalized output.
+- `FinalizeRunSpec` applies trainer preset defaults and user parameters to produce immutable structured data.
+- Submitted `preset_refs` are nullable in the draft `RunSpec`; preset-backed processing requires `preset_refs.trainer` and returns a finalized spec with a non-null trainer preset ID.
+- The submit/API layer chooses the processor for the submission mode; raw/custom submission should use a separate processor instead of adding mode branches inside `PresetBackedProcessor`.
 
 **Idempotency in the core**
 - Same `idempotency_key` + same normalized spec → return existing run.
@@ -339,7 +353,7 @@ Every successful (or failed) run must write the following to its artifact direct
 ```
 /artifacts/{project_id}/{run_id}/
   spec.yaml              # original submitted spec
-  resolved_config.yaml   # preset + overrides merged result
+  resolved_config.yaml   # runtime-materialized view of FinalizedTrainingConfig, when the trainer requires YAML
   stdout.log
   stderr.log
   metrics.json           # structured training metrics
@@ -348,7 +362,7 @@ Every successful (or failed) run must write the following to its artifact direct
   merged/                # optionally merged full weights
 ```
 
-**Rule:** if `spec.yaml` and `resolved_config.yaml` are missing, the run is considered incomplete.
+**Rule:** if `spec.yaml` and the finalized training config artifact are missing, the run is considered incomplete. The artifact may be named `resolved_config.yaml` for trainer compatibility, but YAML is not the source-of-truth representation inside the manager.
 
 The platform tracks produced files with an `ArtifactIndex`: a base path plus file entries containing relative path, size, and checksum metadata. The filesystem remains the source of truth for file contents.
 
@@ -394,50 +408,79 @@ Every preset must produce a `metrics.json` with at minimum the following fields.
 
 `eval` is optional but when present must follow the same shape. This lets agents compare runs that used eval against runs that did not without schema drift.
 
-## 8. Preset Schema
+## 8. TrainerPreset Contract
 
-Presets define the trainer environment and the allowed override keys.
+Presets are structured data, not YAML files. Preset refs are category-based so that trainer, resource, and output defaults/policies can be composed independently. A `TrainerPreset` defines a stable preset ID, trainer runtime, default training values, and an `OptionPolicy` that describes which user parameters are accepted.
 
-Example:
+Conceptual Go shape:
 
-```yaml
-name: axolotl-lora-sft
-runtime:
-  image: axolotl:latest
-  entrypoint: "axolotl train /workspace/config.yml"
-  env:
-    HF_HOME: /cache/huggingface
-schema:
-  allowed_overrides:
-    - learning_rate
-    - num_epochs
-    - max_seq_length
-    - lora_r
-    - lora_alpha
-    - micro_batch_size
-  defaults:
-    learning_rate: 2.0e-4
-    num_epochs: 3
-    max_seq_length: 4096
-    lora_r: 16
-    lora_alpha: 32
+```go
+type ID string
+
+const (
+    PresetAxolotlLoRASFT ID = "axolotl-lora-sft"
+    PresetUnslothLoRASFT ID = "unsloth-lora-sft"
+)
+
+type Preset interface {
+    PresetID() ID
+    OptionPolicy() OptionPolicy
+    Defaults() map[string]any
+}
+
+type TrainerPreset struct {
+    ID            ID
+    DisplayName   string
+    Runtime       RuntimeSpec
+    DefaultValues map[string]any
+    Policy        OptionPolicy
+}
+
+type RuntimeSpec struct {
+    Image      string
+    Entrypoint []string
+    Env        map[string]string
+}
+
+type OptionPolicy struct {
+    Rules map[string]OptionRule
+}
+
+type OptionRule struct {
+    Type OptionValueType
+    Min  *float64
+    Max  *float64
+}
+
+type OptionValueType string
+
+const (
+    OptionString OptionValueType = "string"
+    OptionInt    OptionValueType = "int"
+    OptionFloat  OptionValueType = "float"
+    OptionBool   OptionValueType = "bool"
+)
 ```
 
-Submitting an override key not in `allowed_overrides` returns a validation error.
+Submitting a parameter key that is not present in `OptionPolicy.Rules` returns a validation error. Submitting a value with the wrong type or outside the configured numeric range also returns a validation error.
+
+`OptionValueType` is a small typed string enum used by the validator. It does not validate values by itself; validation code switches on the rule type and checks the submitted `any` value. `Enum`/allowed-values constraints are intentionally excluded from Phase 0 and should be added only when a preset needs them.
+
+Phase 0 presets should be provided as Go fixtures or DB seed data. The manager must not treat YAML preset files as the source of truth.
 
 ### 8.1 Preset Execution Contract
 
 A preset is not just a Docker image. It is a **behavioral contract** between the platform and the trainer container.
 
 **Inputs the platform guarantees**
-1. `resolved_config.yaml` mounted at `/workspace/resolved_config.yaml` (preset defaults + overrides merged).
+1. A finalized training config mounted at the preset-defined path. It may be materialized as `resolved_config.yaml` when the trainer expects YAML, but the manager owns the structured `FinalizedTrainingConfig`.
 2. All `datasets` mounted or symlinked under `/workspace/data/`.
 3. Base model accessible at `/workspace/model/` (or via `HF_HOME` cache if using HF Hub inside the container).
 4. Output directory `/workspace/output/` writable; its contents become the artifact set indexed by the platform.
 
 **Outputs the container must produce**
 1. `/workspace/output/spec.yaml` — copy of the submitted spec.
-2. `/workspace/output/resolved_config.yaml` — the actual config used for training.
+2. `/workspace/output/resolved_config.yaml` — runtime-compatible materialization of the finalized training config, when YAML is used.
 3. `/workspace/output/stdout.log` and `/workspace/output/stderr.log`.
 4. `/workspace/output/metrics.json` — must satisfy the minimum schema in Section 7.1.
 5. `/workspace/output/report.md` — human-readable summary (training time, final loss, hardware used).
@@ -494,6 +537,52 @@ CREATE TABLE specs (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE preset_categories (
+    id TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE presets (
+    id TEXT PRIMARY KEY,
+    category TEXT NOT NULL REFERENCES preset_categories(id),
+    display_name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE trainer_presets (
+    preset_id TEXT PRIMARY KEY REFERENCES presets(id) ON DELETE CASCADE,
+    image TEXT NOT NULL,
+    entrypoint TEXT NOT NULL,
+    env TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE preset_option_rules (
+    preset_id TEXT NOT NULL REFERENCES presets(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value_type TEXT NOT NULL,
+    min_value REAL,
+    max_value REAL,
+    PRIMARY KEY(preset_id, key)
+);
+
+CREATE TABLE preset_default_values (
+    preset_id TEXT NOT NULL REFERENCES presets(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    PRIMARY KEY(preset_id, key)
+);
+
+-- Phase 0 seeds `trainer`, `resource`, and `output` categories, plus the
+-- `axolotl-lora-sft` and `unsloth-lora-sft` trainer preset rows.
+
+CREATE TABLE spec_preset_refs (
+    spec_id TEXT NOT NULL REFERENCES specs(id) ON DELETE CASCADE,
+    category TEXT NOT NULL REFERENCES preset_categories(id),
+    preset_id TEXT NOT NULL REFERENCES presets(id),
+    PRIMARY KEY(spec_id, category)
+);
+
 CREATE TABLE runs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id),
@@ -546,18 +635,18 @@ These are explicitly out of scope for the first milestone:
 - Webhook / notification system
 - W&B SaaS integration (optional later)
 
-## 13. MergeOwl Phase 0 Presets
+## 13. MergeOwl Phase 0 TrainerPresets
 
-Only two presets are required to start:
+Only two trainer presets are required to start:
 
 1. `axolotl-lora-sft`
 2. `unsloth-lora-sft`
 
-Both produce LoRA adapters. Merged model export is optional.
+Both produce LoRA adapters. Merged model export is optional. They should be registered through structured fixtures or DB seed data and looked up by `preset.ID`, not by display name.
 
 ## 14. Agent UX Principles
 
 - A researcher agent should think in **hypotheses and variables**, not Docker flags.
-- Presets encode the infra; overrides encode the experiment.
+- TrainerPresets encode the trainer contract; resource/output presets can encode other categories; parameters encode the experiment.
 - Re-running a past experiment must be a single copy-paste of the RunSpec.
 - A failed run must be inspectable without SSHing into the box.

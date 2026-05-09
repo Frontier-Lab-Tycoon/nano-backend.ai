@@ -25,12 +25,31 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := repo.db.GetContext(ctx, &count, `
 		SELECT COUNT(*)
 		FROM sqlite_master
-		WHERE type = 'table' AND name IN ('projects', 'specs', 'runs', 'artifacts')
+		WHERE type = 'table' AND name IN (
+			'projects', 'specs', 'preset_categories', 'presets', 'trainer_presets',
+			'preset_option_rules', 'preset_default_values', 'spec_preset_refs', 'runs', 'artifacts'
+		)
 	`); err != nil {
 		t.Fatalf("failed to inspect sqlite schema: %v", err)
 	}
-	if count != 4 {
-		t.Fatalf("got %d migrated tables, want 4", count)
+	if count != 10 {
+		t.Fatalf("got %d migrated tables, want 10", count)
+	}
+
+	var categoryCount int
+	if err := repo.db.GetContext(ctx, &categoryCount, `SELECT COUNT(*) FROM preset_categories`); err != nil {
+		t.Fatalf("failed to inspect preset categories: %v", err)
+	}
+	if categoryCount != 3 {
+		t.Fatalf("got %d preset categories, want 3", categoryCount)
+	}
+
+	var presetCount int
+	if err := repo.db.GetContext(ctx, &presetCount, `SELECT COUNT(*) FROM presets`); err != nil {
+		t.Fatalf("failed to inspect presets: %v", err)
+	}
+	if presetCount != 2 {
+		t.Fatalf("got %d presets, want 2", presetCount)
 	}
 }
 
@@ -230,6 +249,28 @@ func TestSubmitRunIdempotencyConflict(t *testing.T) {
 	}
 }
 
+func TestSubmitRunIdempotencyConflictIncludesPresetRefs(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRunRepository(t, ctx)
+	proj := sampleProject()
+	if err := repo.CreateProject(ctx, proj); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	key := "mergeowl-exp-42"
+	spec := sampleSpec(proj.ID)
+	if _, err := repo.SubmitRun(ctx, &spec, &key); err != nil {
+		t.Fatalf("first submit: %v", err)
+	}
+
+	conflictingSpec := sampleSpec(proj.ID)
+	conflictingSpec.Presets.Trainer = runPresetIDPtr("unsloth-lora-sft")
+	_, err := repo.SubmitRun(ctx, &conflictingSpec, &key)
+	if !errors.Is(err, errordef.ErrIdempotencyConflict) {
+		t.Fatalf("got err %v, want ErrIdempotencyConflict", err)
+	}
+}
+
 func newTestRunRepository(t *testing.T, ctx context.Context) *RunRepository {
 	t.Helper()
 	repo, err := NewRunRepository(ctx, Args{
@@ -265,6 +306,9 @@ func sampleProject() project.Project {
 func sampleSpec(projectID uuid.UUID) run.Spec {
 	spec := run.NewSpec(projectID, "mergeowl-exp-42")
 	spec.Description = "LoRA SFT experiment"
+	spec.Presets = run.PresetRefs{
+		Trainer: runPresetIDPtr("axolotl-lora-sft"),
+	}
 	spec.ModelOptions = run.ModelOptions{
 		BaseModel: "unsloth/Llama-3.1-8B",
 	}
@@ -279,13 +323,16 @@ func sampleSpec(projectID uuid.UUID) run.Spec {
 		Timeout: run.TimeoutOptions{DurationSeconds: 14400},
 	}
 	spec.TrainingOptions = run.TrainingOptions{
-		Overrides: map[string]any{
+		Parameters: map[string]any{
 			"learning_rate":  2.0e-4,
 			"lora_r":         32,
 			"max_seq_length": 4096,
 			"num_epochs":     3,
-			"preset":         "axolotl-lora-sft",
 		},
 	}
 	return spec
+}
+
+func runPresetIDPtr(id run.PresetID) *run.PresetID {
+	return &id
 }

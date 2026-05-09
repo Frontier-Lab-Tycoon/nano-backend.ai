@@ -13,6 +13,7 @@ type Spec struct {
 	ProjectID       uuid.UUID       `json:"project_id"`
 	Name            string          `json:"name"`
 	Description     string          `json:"description,omitempty"`
+	Presets         PresetRefs      `json:"preset_refs,omitempty"`
 	ModelOptions    ModelOptions    `json:"model_options"`
 	DataOptions     DataOptions     `json:"data_options"`
 	ResourceOptions ResourceOptions `json:"resource_options"`

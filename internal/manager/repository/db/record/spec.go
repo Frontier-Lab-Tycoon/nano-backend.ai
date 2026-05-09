@@ -21,12 +21,14 @@ type Spec struct {
 	ResourceOptions string `db:"resource_options"`
 	TrainingOptions string `db:"training_options"`
 	CreatedAt       string `db:"created_at"`
+	PresetRefs      run.PresetRefs
 }
 
 type comparableSpec struct {
 	ProjectID       string              `json:"project_id"`
 	Name            string              `json:"name"`
 	Description     string              `json:"description,omitempty"`
+	PresetRefs      run.PresetRefs      `json:"preset_refs,omitempty"`
 	ModelOptions    run.ModelOptions    `json:"model_options"`
 	DataOptions     run.DataOptions     `json:"data_options"`
 	ResourceOptions run.ResourceOptions `json:"resource_options"`
@@ -62,6 +64,7 @@ func NewSpec(spec *run.Spec) (Spec, error) {
 		ResourceOptions: resourceOptions,
 		TrainingOptions: trainingOptions,
 		CreatedAt:       encoding.FormatTime(time.Now()),
+		PresetRefs:      spec.Presets,
 	}, nil
 }
 
@@ -81,6 +84,7 @@ func (s *Spec) ToSpec() (run.Spec, error) {
 		ProjectID:   projectID,
 		Name:        s.Name,
 		Description: s.Description,
+		Presets:     s.PresetRefs,
 	}
 	if err := encoding.UnmarshalJSON(s.ModelOptions, &spec.ModelOptions); err != nil {
 		return run.Spec{}, err
@@ -113,6 +117,7 @@ func ComparableSpecJSON(spec *run.Spec) (string, error) {
 		ProjectID:       spec.ProjectID.String(),
 		Name:            spec.Name,
 		Description:     spec.Description,
+		PresetRefs:      spec.Presets,
 		ModelOptions:    spec.ModelOptions,
 		DataOptions:     spec.DataOptions,
 		ResourceOptions: spec.ResourceOptions,
