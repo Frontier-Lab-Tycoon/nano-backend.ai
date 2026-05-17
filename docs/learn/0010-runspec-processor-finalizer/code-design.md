@@ -14,5 +14,4 @@
 
 ## Finalized Structured Data
 
-`FinalizedRunSpec`은 YAML byte가 아니라 typed struct다. 이 단계에서는 manager가 이해할 수 있는 data model을 유지하고, 특정 trainer runtime이 요구하는 파일 포맷은 더 아래 materialization 단계에서 처리하는 편이 책임 경계가 선명하다.
-
+`spec.Spec`은 YAML byte가 아니라 typed struct다. 사용자가 제출한 `draft.Draft`와 preset data를 검증한 뒤, processor는 실행에 필요한 immutable `spec.Spec`을 만든다. 특정 trainer runtime이 요구하는 파일 포맷은 더 아래 materialization 단계에서 처리하는 편이 책임 경계가 선명하다.

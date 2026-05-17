@@ -52,7 +52,7 @@ Rule of thumb on a 3090: if `lora_r=64` and `max_seq_length=2048`, you probably 
 
 ## System behavior on nano-backend.ai
 
-When you submit a run with preset `axolotl-lora-sft`:
+When you submit a run with preset `16f6f42a-597b-4c37-9b8e-7f3908fbfa73`:
 
 1. **Queue**: scheduler assigns GPU 0 or 1 based on current load.
 2. **Preparing**: container pulls the base model image, downloads dataset if missing, warms cache.

@@ -1,6 +1,5 @@
-// Package run defines the Run lifecycle types: Spec (input contract), Run
-// (execution instance), Status (state machine), resource/option groups, and
-// the artifact index produced by a completed Run.
+// Package run defines Run lifecycle types: Run, Status, primitive resource
+// shapes, and the artifact index produced by a completed Run.
 package run
 
 import (

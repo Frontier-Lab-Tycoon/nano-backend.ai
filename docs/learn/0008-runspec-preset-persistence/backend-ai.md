@@ -2,7 +2,7 @@
 
 ## Spec과 Run의 책임 분리
 
-`run.Spec`는 사용자가 제출한 실행 의도를 표현하고, `run.Run`은 그 의도를 실행하는 ledger entry를 표현한다. preset reference는 실행 의도의 일부이므로 `Run`이 아니라 `Spec` 쪽에 저장하는 것이 자연스럽다.
+`spec.Spec`는 사용자가 제출한 실행 의도를 표현하고, `run.Run`은 그 의도를 실행하는 ledger entry를 표현한다. preset reference는 실행 의도의 일부이므로 `Run`이 아니라 `Spec` 쪽에 저장하는 것이 자연스럽다.
 
 이 구조에서는 같은 `Spec`을 여러 번 실행하거나 idempotency key로 같은 의도를 재제출할 때, 어떤 preset 조합을 선택했는지도 비교 대상에 포함할 수 있다. 그래서 `spec_preset_refs`는 `ComparableSpecJSON`에도 반영된다.
 
