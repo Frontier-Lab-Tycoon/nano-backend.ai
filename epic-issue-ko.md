@@ -91,7 +91,7 @@ RunSpec
 
 - Task: Validation, idempotent retry, conflict handling을 포함한 `POST /runs` 구현.
 - Task: 전체 run state, timestamp, failure reason, artifact path를 반환하는 `GET /runs/{id}` 구현.
-- Task: `status`, `reason`, `next_action_hint`를 포함하는 API error 표준화.
+- Task: HTTP code `status`, 성공 `data` payload와 에러 `{code, message, details, next_action_hint}` payload를 포함하는 API response 표준화.
 
 ### Story 1.5: Project별 Run 목록 조회
 

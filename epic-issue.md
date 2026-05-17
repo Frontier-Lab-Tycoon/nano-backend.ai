@@ -91,7 +91,7 @@ RunSpec
 
 - Task: Implement `POST /runs` with validation, idempotent retry, and conflict handling.
 - Task: Implement `GET /runs/{id}` with full run state, timestamps, failure reason, and artifact path.
-- Task: Standardize API errors with `status`, `reason`, and `next_action_hint`.
+- Task: Standardize API responses with HTTP-code `status`, success `data` payloads, and error `{code, message, details, next_action_hint}` payloads.
 
 ### Story 1.5: List Runs for a Project
 

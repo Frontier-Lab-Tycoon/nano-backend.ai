@@ -341,8 +341,11 @@ GET /runs/{id}/logs?stream=stdout&cursor=1234&limit=200
 Response:
 ```json
 {
-  "next_cursor": 1456,
-  "lines": ["...", "..."]
+  "status": 200,
+  "data": {
+    "next_cursor": 1456,
+    "lines": ["...", "..."]
+  }
 }
 ```
 

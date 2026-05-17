@@ -30,13 +30,21 @@ See `README.md` for project overview, architecture, and tech stack.
 
 ## API Response Conventions
 
-All external API responses use structured JSON:
+All external API responses use a structured JSON envelope:
 
 ```json
-{ "status": "...", "reason": "...", "next_action_hint": "..." }
+{ "status": 200, "data": {} }
 ```
 
-No unstructured text in API responses. Long-running operations return a pollable job ID.
+```json
+{ "status": 404, "error": { "code": "...", "message": "...", "details": {}, "next_action_hint": "..." } }
+```
+
+`status` mirrors the HTTP status code. Machine-readable response fields must be
+stable: HTTP status, endpoint-specific `data`, and `error.code`. Human-readable
+fields such as `error.message` and `error.next_action_hint` are supporting
+context, not client branching keys. Long-running operations return a pollable
+job ID in `data`.
 
 ## Dependency Rules
 
