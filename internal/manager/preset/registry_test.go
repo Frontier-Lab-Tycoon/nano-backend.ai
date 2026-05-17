@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
 )
 
@@ -17,7 +18,7 @@ func TestPhase0RegistryGetsPresetsByID(t *testing.T) {
 		t.Fatalf("get axolotl preset: %v", err)
 	}
 	if axolotl.PresetID() != PresetAxolotlLoRASFT {
-		t.Fatalf("got preset id %q, want %q", axolotl.PresetID(), PresetAxolotlLoRASFT)
+		t.Fatalf("got preset id %s, want %s", axolotl.PresetID(), PresetAxolotlLoRASFT)
 	}
 
 	unsloth, err := registry.Get(ctx, PresetUnslothLoRASFT)
@@ -25,12 +26,12 @@ func TestPhase0RegistryGetsPresetsByID(t *testing.T) {
 		t.Fatalf("get unsloth preset: %v", err)
 	}
 	if unsloth.PresetID() != PresetUnslothLoRASFT {
-		t.Fatalf("got preset id %q, want %q", unsloth.PresetID(), PresetUnslothLoRASFT)
+		t.Fatalf("got preset id %s, want %s", unsloth.PresetID(), PresetUnslothLoRASFT)
 	}
 }
 
 func TestStaticRegistryReturnsNotFoundForUnknownID(t *testing.T) {
-	_, err := NewPhase0Registry().Get(context.Background(), ID("missing"))
+	_, err := NewPhase0Registry().Get(context.Background(), uuid.MustParse("20d05e33-4040-4188-9291-f81d11eb2075"))
 	if err == nil {
 		t.Fatalf("expected error for unknown preset")
 	}
@@ -48,16 +49,16 @@ func TestStaticRegistryListIsOrderedByID(t *testing.T) {
 		t.Fatalf("got %d presets, want 2", len(got))
 	}
 	if got[0].PresetID() != PresetAxolotlLoRASFT || got[1].PresetID() != PresetUnslothLoRASFT {
-		t.Fatalf("got preset order %q, %q", got[0].PresetID(), got[1].PresetID())
+		t.Fatalf("got preset order %s, %s", got[0].PresetID(), got[1].PresetID())
 	}
 }
 
 func TestTrainerPresetReturnsCopies(t *testing.T) {
 	trainerPreset := AxolotlLoRASFT()
 
-	defaults := trainerPreset.Defaults()
+	defaults := trainerPreset.Options().TrainingParameters
 	defaults["learning_rate"] = 9.9
-	if got := trainerPreset.Defaults()["learning_rate"]; got == 9.9 {
+	if got := trainerPreset.Options().TrainingParameters["learning_rate"]; got == 9.9 {
 		t.Fatalf("mutating returned defaults changed preset defaults")
 	}
 

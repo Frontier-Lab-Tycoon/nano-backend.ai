@@ -12,6 +12,8 @@ import (
 	"github.com/seedspirit/nano-backend.ai/internal/common/encoding"
 	"github.com/seedspirit/nano-backend.ai/internal/common/project"
 	"github.com/seedspirit/nano-backend.ai/internal/common/run"
+	"github.com/seedspirit/nano-backend.ai/internal/common/run/preset"
+	"github.com/seedspirit/nano-backend.ai/internal/common/run/spec"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/repository/db/record"
 )
@@ -66,8 +68,8 @@ func (r *RunRepository) CreateProject(ctx context.Context, p project.Project) er
 }
 
 // CreateSpec stores an immutable run spec.
-func (r *RunRepository) CreateSpec(ctx context.Context, spec *run.Spec) error {
-	if spec == nil {
+func (r *RunRepository) CreateSpec(ctx context.Context, runSpec *spec.Spec) error {
+	if runSpec == nil {
 		return errordef.Errorf(errordef.InvalidInput, "spec is nil")
 	}
 	tx, err := r.db.BeginTxx(ctx, nil)
@@ -76,11 +78,11 @@ func (r *RunRepository) CreateSpec(ctx context.Context, spec *run.Spec) error {
 	}
 	defer rollbackUnlessCommitted(tx)
 
-	if err := insertSpec(ctx, tx, spec); err != nil {
+	if err := insertSpec(ctx, tx, runSpec); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit create spec %s: %w", spec.ID, err)
+		return fmt.Errorf("commit create spec %s: %w", runSpec.ID, err)
 	}
 	return nil
 }
@@ -108,11 +110,11 @@ func (r *RunRepository) CreateRun(ctx context.Context, rn *run.Run, projectID uu
 }
 
 // SubmitRun creates a spec and queued run, enforcing idempotency when a key is provided.
-func (r *RunRepository) SubmitRun(ctx context.Context, spec *run.Spec, idempotencyKey *string) (run.Run, error) {
-	if spec == nil {
+func (r *RunRepository) SubmitRun(ctx context.Context, runSpec *spec.Spec, idempotencyKey *string) (run.Run, error) {
+	if runSpec == nil {
 		return run.Run{}, errordef.Errorf(errordef.InvalidInput, "spec is nil")
 	}
-	specFingerprint, err := record.ComparableSpecJSON(spec)
+	specFingerprint, err := record.ComparableSpecJSON(runSpec)
 	if err != nil {
 		return run.Run{}, err
 	}
@@ -124,7 +126,7 @@ func (r *RunRepository) SubmitRun(ctx context.Context, spec *run.Spec, idempoten
 	defer rollbackUnlessCommitted(tx)
 
 	if idempotencyKey != nil && *idempotencyKey != "" {
-		existing, existingFingerprint, err := getRunByIdempotencyKey(ctx, tx, spec.ProjectID, *idempotencyKey)
+		existing, existingFingerprint, err := getRunByIdempotencyKey(ctx, tx, runSpec.ProjectID, *idempotencyKey)
 		if err != nil && !errors.Is(err, errordef.ErrNotFound) {
 			return run.Run{}, err
 		}
@@ -139,16 +141,16 @@ func (r *RunRepository) SubmitRun(ctx context.Context, spec *run.Spec, idempoten
 		}
 	}
 
-	if err := insertSpec(ctx, tx, spec); err != nil {
+	if err := insertSpec(ctx, tx, runSpec); err != nil {
 		return run.Run{}, err
 	}
 
-	rn := run.NewRun(spec.ID)
+	rn := run.NewRun(runSpec.ID)
 	if idempotencyKey != nil && *idempotencyKey != "" {
 		keyCopy := *idempotencyKey
 		rn.IdempotencyKey = &keyCopy
 	}
-	if err := insertRun(ctx, tx, &rn, spec.ProjectID); err != nil {
+	if err := insertRun(ctx, tx, &rn, runSpec.ProjectID); err != nil {
 		return run.Run{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -301,8 +303,8 @@ func (r *RunRepository) GetArtifactIndex(ctx context.Context, runID uuid.UUID) (
 	return index, nil
 }
 
-func insertSpec(ctx context.Context, tx *sqlx.Tx, spec *run.Spec) error {
-	row, err := record.NewSpec(spec)
+func insertSpec(ctx context.Context, tx *sqlx.Tx, runSpec *spec.Spec) error {
+	row, err := record.NewSpec(runSpec)
 	if err != nil {
 		return err
 	}
@@ -318,10 +320,34 @@ func insertSpec(ctx context.Context, tx *sqlx.Tx, spec *run.Spec) error {
 		)
 	`, row)
 	if err != nil {
-		return fmt.Errorf("insert spec %s: %w", spec.ID, err)
+		return fmt.Errorf("insert spec %s: %w", runSpec.ID, err)
 	}
-	if err := insertSpecPresetRefs(ctx, tx, spec.ID, spec.Presets); err != nil {
+	if err := insertSpecPresetRefs(ctx, tx, runSpec.ID, runSpec.PresetRefs); err != nil {
 		return err
+	}
+	return nil
+}
+
+func insertSpecPresetRefs(ctx context.Context, tx *sqlx.Tx, specID uuid.UUID, refs preset.Refs) error {
+	rows := []struct {
+		category preset.Category
+		id       *preset.ID
+	}{
+		{category: preset.TrainerPreset, id: refs.Trainer},
+		{category: preset.ResourcePreset, id: refs.Resource},
+		{category: preset.OutputPreset, id: refs.Output},
+	}
+	for _, row := range rows {
+		if row.id == nil || *row.id == uuid.Nil {
+			continue
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO spec_preset_refs (spec_id, category, preset_id)
+			VALUES (?, ?, ?)
+		`, specID.String(), string(row.category), row.id.String())
+		if err != nil {
+			return fmt.Errorf("insert spec preset ref %s/%s: %w", specID, row.category, err)
+		}
 	}
 	return nil
 }
@@ -363,11 +389,11 @@ func getRunByIdempotencyKey(ctx context.Context, tx *sqlx.Tx, projectID uuid.UUI
 	if err != nil {
 		return run.Run{}, "", err
 	}
-	spec, err := getSpecByID(ctx, tx, rn.SpecID)
+	specRecord, err := getSpecByID(ctx, tx, rn.SpecID)
 	if err != nil {
 		return run.Run{}, "", err
 	}
-	specFingerprint, err := spec.ComparableJSON()
+	specFingerprint, err := specRecord.ComparableJSON()
 	if err != nil {
 		return run.Run{}, "", err
 	}
@@ -396,30 +422,7 @@ func getSpecByID(ctx context.Context, tx *sqlx.Tx, id uuid.UUID) (record.Spec, e
 	return row, nil
 }
 
-func insertSpecPresetRefs(ctx context.Context, tx *sqlx.Tx, specID uuid.UUID, refs run.PresetRefs) error {
-	rows := []struct {
-		Category run.PresetCategory
-		PresetID *run.PresetID
-	}{
-		{Category: run.TrainerPreset, PresetID: refs.Trainer},
-		{Category: run.ResourcePreset, PresetID: refs.Resource},
-		{Category: run.OutputPreset, PresetID: refs.Output},
-	}
-	for _, row := range rows {
-		if row.PresetID == nil || *row.PresetID == "" {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO spec_preset_refs (spec_id, category, preset_id)
-			VALUES (?, ?, ?)
-		`, specID.String(), string(row.Category), string(*row.PresetID)); err != nil {
-			return fmt.Errorf("insert spec preset ref %s %s: %w", specID, row.Category, err)
-		}
-	}
-	return nil
-}
-
-func getSpecPresetRefs(ctx context.Context, tx *sqlx.Tx, specID uuid.UUID) (run.PresetRefs, error) {
+func getSpecPresetRefs(ctx context.Context, tx *sqlx.Tx, specID uuid.UUID) (preset.Refs, error) {
 	var rows []struct {
 		Category string `db:"category"`
 		PresetID string `db:"preset_id"`
@@ -429,19 +432,24 @@ func getSpecPresetRefs(ctx context.Context, tx *sqlx.Tx, specID uuid.UUID) (run.
 		FROM spec_preset_refs
 		WHERE spec_id = ?
 	`, specID.String()); err != nil {
-		return run.PresetRefs{}, fmt.Errorf("get spec preset refs %s: %w", specID, err)
+		return preset.Refs{}, fmt.Errorf("get spec preset refs %s: %w", specID, err)
 	}
 
-	var refs run.PresetRefs
+	var refs preset.Refs
 	for _, row := range rows {
-		presetID := run.PresetID(row.PresetID)
-		switch run.PresetCategory(row.Category) {
-		case run.TrainerPreset:
-			refs.Trainer = &presetID
-		case run.ResourcePreset:
-			refs.Resource = &presetID
-		case run.OutputPreset:
-			refs.Output = &presetID
+		id, err := uuid.Parse(row.PresetID)
+		if err != nil {
+			return preset.Refs{}, fmt.Errorf("parse preset id %q: %w", row.PresetID, err)
+		}
+		switch preset.Category(row.Category) {
+		case preset.TrainerPreset:
+			refs.Trainer = &id
+		case preset.ResourcePreset:
+			refs.Resource = &id
+		case preset.OutputPreset:
+			refs.Output = &id
+		default:
+			return preset.Refs{}, fmt.Errorf("unknown preset category %q", row.Category)
 		}
 	}
 	return refs, nil

@@ -6,18 +6,22 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run"
+	"github.com/seedspirit/nano-backend.ai/internal/common/run/draft"
+	"github.com/seedspirit/nano-backend.ai/internal/common/run/preset"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
-	"github.com/seedspirit/nano-backend.ai/internal/manager/preset"
+	trainerpreset "github.com/seedspirit/nano-backend.ai/internal/manager/preset"
 )
 
 func TestPresetBackedProcessorOrchestratesLookupValidationAndFinalize(t *testing.T) {
 	ctx := context.Background()
-	spec := sampleSpec()
-	trainerPreset := preset.AxolotlLoRASFT()
+	runDraft := sampleDraft()
+	trainerPreset := trainerpreset.AxolotlLoRASFT()
+	resourcePreset := testPreset{id: uuid.MustParse("4925e535-5afa-47ca-bd48-dad90d10954c")}
+	runDraft.PresetRefs.Resource = runPresetIDPtr(resourcePreset.PresetID())
 	registry := &recordingRegistry{
 		presets: map[preset.ID]preset.Preset{
-			preset.PresetAxolotlLoRASFT: &trainerPreset,
+			trainerpreset.PresetAxolotlLoRASFT: &trainerPreset,
+			resourcePreset.PresetID():          resourcePreset,
 		},
 	}
 	validator := &recordingValidator{}
@@ -26,35 +30,47 @@ func TestPresetBackedProcessorOrchestratesLookupValidationAndFinalize(t *testing
 		Validator: validator,
 	}
 
-	finalized, err := processor.Process(ctx, &spec)
+	finalized, err := processor.Process(ctx, &runDraft)
 	if err != nil {
 		t.Fatalf("process runspec: %v", err)
 	}
 
-	if registry.requestedID != preset.PresetAxolotlLoRASFT {
-		t.Fatalf("got registry id %q, want %q", registry.requestedID, preset.PresetAxolotlLoRASFT)
+	if registry.callCount != 1 {
+		t.Fatalf("got registry call count %d, want 1", registry.callCount)
+	}
+	if len(registry.requestedIDs) != 2 {
+		t.Fatalf("got registry ids %v, want trainer and resource ids in one lookup", registry.requestedIDs)
+	}
+	if registry.requestedIDs[0] != trainerpreset.PresetAxolotlLoRASFT {
+		t.Fatalf("got first registry id %s, want %s", registry.requestedIDs[0], trainerpreset.PresetAxolotlLoRASFT)
+	}
+	if registry.requestedIDs[1] != resourcePreset.PresetID() {
+		t.Fatalf("got second registry id %s, want %s", registry.requestedIDs[1], resourcePreset.PresetID())
 	}
 	if !validator.called {
 		t.Fatalf("validator was not called")
 	}
-	if validator.spec.ID != spec.ID {
-		t.Fatalf("validator got spec id %s, want %s", validator.spec.ID, spec.ID)
+	if validator.draft.ID != runDraft.ID {
+		t.Fatalf("validator got spec id %s, want %s", validator.draft.ID, runDraft.ID)
 	}
-	if validator.presetID != preset.PresetAxolotlLoRASFT {
-		t.Fatalf("validator got preset id %q, want %q", validator.presetID, preset.PresetAxolotlLoRASFT)
+	if validator.presetID != trainerpreset.PresetAxolotlLoRASFT {
+		t.Fatalf("validator got preset id %s, want %s", validator.presetID, trainerpreset.PresetAxolotlLoRASFT)
 	}
-	if finalized.SpecID != spec.ID {
-		t.Fatalf("got finalized spec id %s, want %s", finalized.SpecID, spec.ID)
+	if validator.resourcePresetID != resourcePreset.PresetID() {
+		t.Fatalf("validator got resource preset id %s, want %s", validator.resourcePresetID, resourcePreset.PresetID())
+	}
+	if finalized.ID != runDraft.ID {
+		t.Fatalf("got finalized spec id %s, want %s", finalized.ID, runDraft.ID)
 	}
 }
 
 func TestPresetBackedProcessorStopsOnValidationErrors(t *testing.T) {
-	spec := sampleSpec()
-	trainerPreset := preset.AxolotlLoRASFT()
+	runDraft := sampleDraft()
+	trainerPreset := trainerpreset.AxolotlLoRASFT()
 	processor := PresetBackedProcessor{
 		Registry: &recordingRegistry{
 			presets: map[preset.ID]preset.Preset{
-				preset.PresetAxolotlLoRASFT: &trainerPreset,
+				trainerpreset.PresetAxolotlLoRASFT: &trainerPreset,
 			},
 		},
 		Validator: &recordingValidator{
@@ -64,7 +80,7 @@ func TestPresetBackedProcessorStopsOnValidationErrors(t *testing.T) {
 		},
 	}
 
-	finalized, err := processor.Process(context.Background(), &spec)
+	finalized, err := processor.Process(context.Background(), &runDraft)
 	if err == nil {
 		t.Fatalf("expected validation error")
 	}
@@ -72,19 +88,19 @@ func TestPresetBackedProcessorStopsOnValidationErrors(t *testing.T) {
 	if !errors.As(err, &validationErrs) {
 		t.Fatalf("got error %T %v, want ValidationErrors", err, err)
 	}
-	if finalized.SpecID != uuid.Nil {
+	if finalized.ID != uuid.Nil {
 		t.Fatalf("got finalized output %+v, want zero value", finalized)
 	}
 }
 
 func TestPresetBackedProcessorReturnsRegistryError(t *testing.T) {
-	spec := sampleSpec()
+	runDraft := sampleDraft()
 	processor := PresetBackedProcessor{
 		Registry:  &recordingRegistry{err: errordef.ErrNotFound},
 		Validator: &recordingValidator{},
 	}
 
-	_, err := processor.Process(context.Background(), &spec)
+	_, err := processor.Process(context.Background(), &runDraft)
 	if err == nil {
 		t.Fatalf("expected registry error")
 	}
@@ -93,55 +109,76 @@ func TestPresetBackedProcessorReturnsRegistryError(t *testing.T) {
 	}
 }
 
-func TestExtractTrainerPresetID(t *testing.T) {
-	spec := sampleSpec()
-
-	got, err := ExtractTrainerPresetID(&spec)
-	if err != nil {
-		t.Fatalf("extract preset id: %v", err)
+func TestReadPresets(t *testing.T) {
+	runDraft := sampleDraft()
+	trainerPreset := trainerpreset.AxolotlLoRASFT()
+	processor := PresetBackedProcessor{
+		Registry: &recordingRegistry{
+			presets: map[preset.ID]preset.Preset{
+				trainerpreset.PresetAxolotlLoRASFT: &trainerPreset,
+			},
+		},
 	}
-	if got != preset.PresetAxolotlLoRASFT {
-		t.Fatalf("got preset id %q, want %q", got, preset.PresetAxolotlLoRASFT)
+
+	got, err := processor.readPresets(context.Background(), &runDraft)
+	if err != nil {
+		t.Fatalf("read presets: %v", err)
+	}
+	if got.Trainer == nil || got.Trainer.PresetID() != trainerpreset.PresetAxolotlLoRASFT {
+		t.Fatalf("got trainer preset %v, want %s", got.Trainer, trainerpreset.PresetAxolotlLoRASFT)
 	}
 }
 
-func TestExtractTrainerPresetIDRejectsMissingSelector(t *testing.T) {
-	spec := sampleSpec()
-	spec.Presets.Trainer = nil
+func TestReadPresetsAllowsMissingTrainerSelector(t *testing.T) {
+	runDraft := sampleDraft()
+	runDraft.PresetRefs.Trainer = nil
+	processor := PresetBackedProcessor{}
 
-	_, err := ExtractTrainerPresetID(&spec)
-	if err == nil {
-		t.Fatalf("expected missing preset selector error")
+	got, err := processor.readPresets(context.Background(), &runDraft)
+	if err != nil {
+		t.Fatalf("read presets: %v", err)
 	}
-	if !errors.Is(err, errordef.ErrInvalidInput) {
-		t.Fatalf("got error %v, want invalid_input", err)
+	if got.Trainer != nil {
+		t.Fatalf("got trainer preset %v, want nil", got.Trainer)
 	}
 }
 
 type recordingRegistry struct {
-	presets     map[preset.ID]preset.Preset
-	requestedID preset.ID
-	err         error
+	presets      map[preset.ID]preset.Preset
+	requestedIDs []preset.ID
+	callCount    int
+	err          error
 }
 
-func (r *recordingRegistry) Get(_ context.Context, id preset.ID) (preset.Preset, error) {
-	r.requestedID = id
+func (r *recordingRegistry) GetMany(_ context.Context, ids []preset.ID) (map[preset.ID]preset.Preset, error) {
+	r.callCount++
+	r.requestedIDs = append(r.requestedIDs, ids...)
 	if r.err != nil {
 		return nil, r.err
 	}
-	return r.presets[id], nil
+	resolved := make(map[preset.ID]preset.Preset, len(ids))
+	for _, id := range ids {
+		resolved[id] = r.presets[id]
+	}
+	return resolved, nil
 }
 
 type recordingValidator struct {
-	called   bool
-	spec     *run.Spec
-	presetID preset.ID
-	errs     ValidationErrors
+	called           bool
+	draft            *draft.Draft
+	presetID         preset.ID
+	resourcePresetID preset.ID
+	errs             ValidationErrors
 }
 
-func (v *recordingValidator) Validate(spec *run.Spec, trainerPreset preset.Preset) ValidationErrors {
+func (v *recordingValidator) Validate(candidate Candidate) ValidationErrors {
 	v.called = true
-	v.spec = spec
-	v.presetID = trainerPreset.PresetID()
+	v.draft = candidate.Draft
+	if candidate.Presets.Trainer != nil {
+		v.presetID = candidate.Presets.Trainer.PresetID()
+	}
+	if candidate.Presets.Resource != nil {
+		v.resourcePresetID = candidate.Presets.Resource.PresetID()
+	}
 	return v.errs
 }

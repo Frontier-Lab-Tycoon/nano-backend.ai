@@ -2,7 +2,7 @@ package runspec
 
 import "strings"
 
-// ValidationError describes one RunSpec validation failure.
+// ValidationError describes one candidate validation failure.
 type ValidationError struct {
 	Field  string
 	Reason string

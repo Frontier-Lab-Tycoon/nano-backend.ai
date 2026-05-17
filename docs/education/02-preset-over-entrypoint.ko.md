@@ -83,7 +83,7 @@ docker run --rm --gpus all \
 Preset-first 세계에서는 보통 이렇게 줄어듭니다.
 
 ```yaml
-preset: axolotl-lora-sft
+preset: 16f6f42a-597b-4c37-9b8e-7f3908fbfa73
 overrides:
   learning_rate: 2e-4
   num_epochs: 3

@@ -25,14 +25,27 @@ func NewStaticRegistry(presets ...TrainerPreset) StaticRegistry {
 
 // Get returns a preset by stable ID.
 func (r StaticRegistry) Get(ctx context.Context, id ID) (Preset, error) {
+	presets, err := r.GetMany(ctx, []ID{id})
+	if err != nil {
+		return nil, err
+	}
+	return presets[id], nil
+}
+
+// GetMany returns presets by stable ID.
+func (r StaticRegistry) GetMany(ctx context.Context, ids []ID) (map[ID]Preset, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	trainerPreset, ok := r.presets[id]
-	if !ok {
-		return nil, errordef.Errorf(errordef.NotFound, "preset %q not found", id)
+	resolved := make(map[ID]Preset, len(ids))
+	for _, id := range ids {
+		trainerPreset, ok := r.presets[id]
+		if !ok {
+			return nil, errordef.Errorf(errordef.NotFound, "preset %s not found", id)
+		}
+		resolved[id] = trainerPreset
 	}
-	return trainerPreset, nil
+	return resolved, nil
 }
 
 // List returns all registered presets ordered by stable ID.
@@ -40,15 +53,17 @@ func (r StaticRegistry) List(ctx context.Context) ([]Preset, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(r.presets))
+	ids := make([]ID, 0, len(r.presets))
 	for id := range r.presets {
-		ids = append(ids, string(id))
+		ids = append(ids, id)
 	}
-	sort.Strings(ids)
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i].String() < ids[j].String()
+	})
 
 	presets := make([]Preset, 0, len(ids))
 	for _, id := range ids {
-		trainerPreset, ok := r.presets[ID(id)]
+		trainerPreset, ok := r.presets[id]
 		if !ok {
 			return nil, fmt.Errorf("preset registry changed while listing")
 		}

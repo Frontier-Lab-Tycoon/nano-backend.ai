@@ -59,50 +59,50 @@ CREATE TABLE IF NOT EXISTS preset_default_values (
 );
 
 INSERT OR IGNORE INTO presets (id, category, display_name, enabled, created_at) VALUES
-    ('axolotl-lora-sft', 'trainer', 'Axolotl LoRA SFT', 1, '1970-01-01T00:00:00Z'),
-    ('unsloth-lora-sft', 'trainer', 'Unsloth LoRA SFT', 1, '1970-01-01T00:00:00Z');
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'trainer', 'Axolotl LoRA SFT', 1, '1970-01-01T00:00:00Z'),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'trainer', 'Unsloth LoRA SFT', 1, '1970-01-01T00:00:00Z');
 
 INSERT OR IGNORE INTO trainer_presets (preset_id, image, entrypoint, env) VALUES
     (
-        'axolotl-lora-sft',
+        '16f6f42a-597b-4c37-9b8e-7f3908fbfa73',
         'axolotl:latest',
         '["axolotl","train","/workspace/resolved_config.yaml"]',
         '{"HF_HOME":"/cache/huggingface"}'
     ),
     (
-        'unsloth-lora-sft',
+        '258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75',
         'unsloth:latest',
         '["python","-m","nano_backend.train_unsloth","--config","/workspace/resolved_config.yaml"]',
         '{"HF_HOME":"/cache/huggingface"}'
     );
 
 INSERT OR IGNORE INTO preset_option_rules (preset_id, key, value_type, min_value, max_value) VALUES
-    ('axolotl-lora-sft', 'learning_rate', 'float', 0, 1),
-    ('axolotl-lora-sft', 'num_epochs', 'int', 1, 100),
-    ('axolotl-lora-sft', 'max_seq_length', 'int', 128, 32768),
-    ('axolotl-lora-sft', 'lora_r', 'int', 1, 256),
-    ('axolotl-lora-sft', 'lora_alpha', 'int', 1, 512),
-    ('axolotl-lora-sft', 'micro_batch_size', 'int', 1, 64),
-    ('unsloth-lora-sft', 'learning_rate', 'float', 0, 1),
-    ('unsloth-lora-sft', 'num_epochs', 'int', 1, 100),
-    ('unsloth-lora-sft', 'max_seq_length', 'int', 128, 32768),
-    ('unsloth-lora-sft', 'lora_r', 'int', 1, 256),
-    ('unsloth-lora-sft', 'lora_alpha', 'int', 1, 512),
-    ('unsloth-lora-sft', 'micro_batch_size', 'int', 1, 64);
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'learning_rate', 'float', 0, 1),
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'num_epochs', 'int', 1, 100),
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'max_seq_length', 'int', 128, 32768),
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'lora_r', 'int', 1, 256),
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'lora_alpha', 'int', 1, 512),
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'micro_batch_size', 'int', 1, 64),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'learning_rate', 'float', 0, 1),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'num_epochs', 'int', 1, 100),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'max_seq_length', 'int', 128, 32768),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'lora_r', 'int', 1, 256),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'lora_alpha', 'int', 1, 512),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'micro_batch_size', 'int', 1, 64);
 
 INSERT OR IGNORE INTO preset_default_values (preset_id, key, value_json) VALUES
-    ('axolotl-lora-sft', 'learning_rate', '0.0002'),
-    ('axolotl-lora-sft', 'num_epochs', '3'),
-    ('axolotl-lora-sft', 'max_seq_length', '4096'),
-    ('axolotl-lora-sft', 'lora_r', '16'),
-    ('axolotl-lora-sft', 'lora_alpha', '32'),
-    ('axolotl-lora-sft', 'micro_batch_size', '1'),
-    ('unsloth-lora-sft', 'learning_rate', '0.0002'),
-    ('unsloth-lora-sft', 'num_epochs', '3'),
-    ('unsloth-lora-sft', 'max_seq_length', '4096'),
-    ('unsloth-lora-sft', 'lora_r', '16'),
-    ('unsloth-lora-sft', 'lora_alpha', '32'),
-    ('unsloth-lora-sft', 'micro_batch_size', '1');
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'learning_rate', '0.0002'),
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'num_epochs', '3'),
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'max_seq_length', '4096'),
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'lora_r', '16'),
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'lora_alpha', '32'),
+    ('16f6f42a-597b-4c37-9b8e-7f3908fbfa73', 'micro_batch_size', '1'),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'learning_rate', '0.0002'),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'num_epochs', '3'),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'max_seq_length', '4096'),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'lora_r', '16'),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'lora_alpha', '32'),
+    ('258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75', 'micro_batch_size', '1');
 
 CREATE TABLE IF NOT EXISTS spec_preset_refs (
     spec_id TEXT NOT NULL REFERENCES specs(id) ON DELETE CASCADE,

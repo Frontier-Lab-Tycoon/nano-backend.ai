@@ -1,23 +1,22 @@
 package preset
 
-import "github.com/seedspirit/nano-backend.ai/internal/common/run"
-
-// ID is the stable identity for a trainer preset.
-type ID = run.PresetID
-
-const (
-	// PresetAxolotlLoRASFT identifies the Phase 0 Axolotl LoRA SFT preset.
-	PresetAxolotlLoRASFT ID = "axolotl-lora-sft"
-	// PresetUnslothLoRASFT identifies the Phase 0 Unsloth LoRA SFT preset.
-	PresetUnslothLoRASFT ID = "unsloth-lora-sft"
+import (
+	"github.com/google/uuid"
+	commonpreset "github.com/seedspirit/nano-backend.ai/internal/common/run/preset"
 )
 
-// Preset is the validation and finalization contract consumed by RunSpec code.
-type Preset interface {
-	PresetID() ID
-	OptionPolicy() OptionPolicy
-	Defaults() map[string]any
-}
+// ID is the stable identity for a preset.
+type ID = commonpreset.ID
+
+// Preset is the resolved preset contract used by RunSpec processing.
+type Preset = commonpreset.Preset
+
+var (
+	// PresetAxolotlLoRASFT identifies the Phase 0 Axolotl LoRA SFT preset.
+	PresetAxolotlLoRASFT ID = uuid.MustParse("16f6f42a-597b-4c37-9b8e-7f3908fbfa73")
+	// PresetUnslothLoRASFT identifies the Phase 0 Unsloth LoRA SFT preset.
+	PresetUnslothLoRASFT ID = uuid.MustParse("258e5d45-c4e1-40a4-9f88-8fbb0b7f7c75")
+)
 
 // TrainerPreset defines a trainer runtime and the parameter surface exposed to users.
 type TrainerPreset struct {
@@ -71,9 +70,9 @@ func (p *TrainerPreset) OptionPolicy() OptionPolicy {
 	return OptionPolicy{Rules: cloneRules(p.Policy.Rules)}
 }
 
-// Defaults returns a copy of the preset default training values.
-func (p *TrainerPreset) Defaults() map[string]any {
-	return cloneAnyMap(p.DefaultValues)
+// Options returns a copy of the preset option data.
+func (p *TrainerPreset) Options() commonpreset.Options {
+	return commonpreset.Options{TrainingParameters: cloneAnyMap(p.DefaultValues)}
 }
 
 func cloneRules(rules map[string]OptionRule) map[string]OptionRule {

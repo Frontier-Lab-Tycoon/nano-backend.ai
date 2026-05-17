@@ -19,7 +19,7 @@ Date: 2026-05-09
 | Decision | Why | Alternatives considered |
 |----------|-----|-------------------------|
 | registry lookup은 ID 기반 | display name은 변경될 수 있지만 ID는 stable identity이기 때문 | display name lookup |
-| `preset.ID`는 `run.PresetID` alias | request contract와 manager domain identity를 타입으로 연결하기 위해 | 별도 string type 변환 |
+| manager `preset.ID`는 common `run/preset.ID` alias | draft request와 manager preset domain이 같은 stable identity를 공유하기 위해 | draft package 안에 ID 정의 |
 | fixtures는 YAML이 아닌 Go data | manager가 structured data를 source of truth로 다루기 위해 | embedded YAML fixture |
 
 ## Further study

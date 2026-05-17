@@ -16,7 +16,7 @@ Use `.claude/skills/README.md` for the available project workflows and skills.
 
 ## MVP Goals
 
-- Accept declarative RunSpecs built from `preset + overrides`
+- Accept declarative run drafts built from `preset + overrides`
 - Validate presets and overrides before consuming queue or GPU capacity
 - Persist every run in a local SQLite ledger
 - Execute at most two single-GPU runs concurrently
@@ -33,9 +33,10 @@ Long-running operations expose pollable resources. For Phase 0, logs use cursor-
 ## Phase 0 Architecture
 
 ```text
-RunSpec
+RunDraft
   -> API preflight validation
   -> preset registry / resolved config
+  -> immutable spec.Spec
   -> SQLite run ledger
   -> FIFO scheduler / GPU allocator
   -> ExecutionIntent

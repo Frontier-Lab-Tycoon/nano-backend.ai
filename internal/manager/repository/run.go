@@ -6,14 +6,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/seedspirit/nano-backend.ai/internal/common/project"
 	"github.com/seedspirit/nano-backend.ai/internal/common/run"
+	"github.com/seedspirit/nano-backend.ai/internal/common/run/spec"
 )
 
 // RunRepository persists projects, specs, runs, and artifact indexes.
 type RunRepository interface {
 	CreateProject(ctx context.Context, p project.Project) error
-	CreateSpec(ctx context.Context, spec *run.Spec) error
+	CreateSpec(ctx context.Context, runSpec *spec.Spec) error
 	CreateRun(ctx context.Context, rn *run.Run, projectID uuid.UUID) error
-	SubmitRun(ctx context.Context, spec *run.Spec, idempotencyKey *string) (run.Run, error)
+	SubmitRun(ctx context.Context, runSpec *spec.Spec, idempotencyKey *string) (run.Run, error)
 	GetRun(ctx context.Context, id uuid.UUID) (run.Run, error)
 	ListRuns(ctx context.Context, projectID uuid.UUID) ([]run.Run, error)
 	UpdateLifecycle(ctx context.Context, id uuid.UUID, lifecycle run.Lifecycle) error

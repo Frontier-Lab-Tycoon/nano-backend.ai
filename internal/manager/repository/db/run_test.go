@@ -10,7 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/seedspirit/nano-backend.ai/internal/common/project"
 	"github.com/seedspirit/nano-backend.ai/internal/common/run"
+	"github.com/seedspirit/nano-backend.ai/internal/common/run/spec"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
+	trainerpreset "github.com/seedspirit/nano-backend.ai/internal/manager/preset"
 )
 
 func TestMigrateIsIdempotent(t *testing.T) {
@@ -67,6 +69,7 @@ func TestCreateGetAndListRuns(t *testing.T) {
 	if err := repo.CreateSpec(ctx, &firstSpec); err != nil {
 		t.Fatalf("create first spec: %v", err)
 	}
+	assertSpecPresetRefs(t, ctx, repo, &firstSpec)
 	if err := repo.CreateSpec(ctx, &secondSpec); err != nil {
 		t.Fatalf("create second spec: %v", err)
 	}
@@ -99,6 +102,24 @@ func TestCreateGetAndListRuns(t *testing.T) {
 	}
 	if listed[0].ID != secondRun.ID || listed[1].ID != firstRun.ID {
 		t.Fatalf("runs are not ordered by newest created_at: got %s then %s", listed[0].ID, listed[1].ID)
+	}
+}
+
+func assertSpecPresetRefs(t *testing.T, ctx context.Context, repo *RunRepository, runSpec *spec.Spec) {
+	t.Helper()
+	var got string
+	if err := repo.db.GetContext(ctx, &got, `
+		SELECT preset_id
+		FROM spec_preset_refs
+		WHERE spec_id = ? AND category = 'trainer'
+	`, runSpec.ID.String()); err != nil {
+		t.Fatalf("get spec preset refs: %v", err)
+	}
+	if runSpec.PresetRefs.Trainer == nil {
+		t.Fatalf("sample spec trainer preset ref is nil")
+	}
+	if got != runSpec.PresetRefs.Trainer.String() {
+		t.Fatalf("got trainer preset ref %s, want %s", got, runSpec.PresetRefs.Trainer.String())
 	}
 }
 
@@ -202,13 +223,13 @@ func TestSubmitRunIdempotencyExactMatch(t *testing.T) {
 	}
 
 	key := "mergeowl-exp-42"
-	spec := sampleSpec(proj.ID)
-	first, err := repo.SubmitRun(ctx, &spec, &key)
+	runSpec := sampleSpec(proj.ID)
+	first, err := repo.SubmitRun(ctx, &runSpec, &key)
 	if err != nil {
 		t.Fatalf("first submit: %v", err)
 	}
 
-	retry := spec
+	retry := runSpec
 	retry.ID = uuid.New()
 	second, err := repo.SubmitRun(ctx, &retry, &key)
 	if err != nil {
@@ -228,8 +249,8 @@ func TestSubmitRunIdempotencyConflict(t *testing.T) {
 	}
 
 	key := "mergeowl-exp-42"
-	spec := sampleSpec(proj.ID)
-	first, err := repo.SubmitRun(ctx, &spec, &key)
+	runSpec := sampleSpec(proj.ID)
+	first, err := repo.SubmitRun(ctx, &runSpec, &key)
 	if err != nil {
 		t.Fatalf("first submit: %v", err)
 	}
@@ -249,7 +270,7 @@ func TestSubmitRunIdempotencyConflict(t *testing.T) {
 	}
 }
 
-func TestSubmitRunIdempotencyConflictIncludesPresetRefs(t *testing.T) {
+func TestSubmitRunIdempotencyConflictIncludesTrainingOptions(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestRunRepository(t, ctx)
 	proj := sampleProject()
@@ -258,13 +279,13 @@ func TestSubmitRunIdempotencyConflictIncludesPresetRefs(t *testing.T) {
 	}
 
 	key := "mergeowl-exp-42"
-	spec := sampleSpec(proj.ID)
-	if _, err := repo.SubmitRun(ctx, &spec, &key); err != nil {
+	runSpec := sampleSpec(proj.ID)
+	if _, err := repo.SubmitRun(ctx, &runSpec, &key); err != nil {
 		t.Fatalf("first submit: %v", err)
 	}
 
 	conflictingSpec := sampleSpec(proj.ID)
-	conflictingSpec.Presets.Trainer = runPresetIDPtr("unsloth-lora-sft")
+	conflictingSpec.TrainingOptions.Parameters["lora_r"] = 64
 	_, err := repo.SubmitRun(ctx, &conflictingSpec, &key)
 	if !errors.Is(err, errordef.ErrIdempotencyConflict) {
 		t.Fatalf("got err %v, want ErrIdempotencyConflict", err)
@@ -289,8 +310,8 @@ func newTestRunRepository(t *testing.T, ctx context.Context) *RunRepository {
 
 func submitSampleRun(t *testing.T, ctx context.Context, repo *RunRepository, projectID uuid.UUID, key *string) run.Run {
 	t.Helper()
-	spec := sampleSpec(projectID)
-	rn, err := repo.SubmitRun(ctx, &spec, key)
+	runSpec := sampleSpec(projectID)
+	rn, err := repo.SubmitRun(ctx, &runSpec, key)
 	if err != nil {
 		t.Fatalf("submit sample run: %v", err)
 	}
@@ -303,36 +324,36 @@ func sampleProject() project.Project {
 	return p
 }
 
-func sampleSpec(projectID uuid.UUID) run.Spec {
-	spec := run.NewSpec(projectID, "mergeowl-exp-42")
-	spec.Description = "LoRA SFT experiment"
-	spec.Presets = run.PresetRefs{
-		Trainer: runPresetIDPtr("axolotl-lora-sft"),
-	}
-	spec.ModelOptions = run.ModelOptions{
+func sampleSpec(projectID uuid.UUID) spec.Spec {
+	runSpec := spec.New(projectID, "mergeowl-exp-42")
+	runSpec.Description = "LoRA SFT experiment"
+	runSpec.PresetRefs.Trainer = runPresetIDPtr(trainerpreset.PresetAxolotlLoRASFT)
+	runSpec.ModelOptions = spec.ModelOptions{
 		BaseModel: "unsloth/Llama-3.1-8B",
 	}
-	spec.DataOptions = run.DataOptions{
-		Datasets: []run.DatasetRef{
+	runSpec.DataOptions = spec.DataOptions{
+		Datasets: []spec.DatasetRef{
 			{Path: "mergeowl/v1", Split: "train"},
 		},
 	}
-	spec.ResourceOptions = run.ResourceOptions{
+	runSpec.ResourceOptions = spec.ResourceOptions{
 		GPU:     run.GPUOptions{Count: 1},
 		Memory:  run.MemoryOptions{LimitBytes: 34359738368},
 		Timeout: run.TimeoutOptions{DurationSeconds: 14400},
 	}
-	spec.TrainingOptions = run.TrainingOptions{
+	runSpec.TrainingOptions = spec.TrainingOptions{
 		Parameters: map[string]any{
-			"learning_rate":  2.0e-4,
-			"lora_r":         32,
-			"max_seq_length": 4096,
-			"num_epochs":     3,
+			"learning_rate":    2.0e-4,
+			"lora_r":           32,
+			"lora_alpha":       32,
+			"max_seq_length":   4096,
+			"num_epochs":       3,
+			"micro_batch_size": 1,
 		},
 	}
-	return spec
+	return runSpec
 }
 
-func runPresetIDPtr(id run.PresetID) *run.PresetID {
+func runPresetIDPtr(id trainerpreset.ID) *trainerpreset.ID {
 	return &id
 }
