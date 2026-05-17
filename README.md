@@ -26,7 +26,9 @@ Use `.claude/skills/README.md` for the available project workflows and skills.
 
 ## API Design Philosophy
 
-AI agents are the primary consumer. Responses should be machine-readable first: structured JSON, explicit statuses, stable error reasons, and clear next-step hints where useful.
+AI agents are the primary consumer. Responses should be machine-readable first:
+structured JSON envelopes, endpoint-specific `data` payloads, explicit statuses,
+stable `error.code` values, and clear next-step hints where useful.
 
 Long-running operations expose pollable resources. For Phase 0, logs use cursor-based polling rather than WebSockets.
 

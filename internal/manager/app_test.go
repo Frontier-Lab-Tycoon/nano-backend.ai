@@ -25,11 +25,15 @@ func TestHealthReturns200OK(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.Status != "ok" {
-		t.Errorf("got status %q, want %q", resp.Status, "ok")
+	if resp.Status != http.StatusOK {
+		t.Errorf("got response body status %d, want %d", resp.Status, http.StatusOK)
 	}
-	if resp.Reason != "healthy" {
-		t.Errorf("got reason %q, want %q", resp.Reason, "healthy")
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("got data %T, want object", resp.Data)
+	}
+	if data["state"] != "healthy" {
+		t.Errorf("got state %q, want %q", data["state"], "healthy")
 	}
 }
 
