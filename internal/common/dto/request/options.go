@@ -1,8 +1,8 @@
 package request
 
 import (
-	"github.com/seedspirit/nano-backend.ai/internal/common/run"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/draft"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/draft"
 )
 
 // ModelOptionsReq describes the requested base model for a run draft.

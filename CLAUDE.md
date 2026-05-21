@@ -23,10 +23,27 @@ See `README.md` for project overview, architecture, and tech stack.
 
 ## Branch Naming
 
-`<type>/<short-description>` — examples:
+Do not work directly on `main`. Before making repository changes, create a
+topic branch from the current `origin/main` unless the user explicitly asks for
+a different base.
+
+Use `<type>/<short-description>` — examples:
 
 - `feat/health-api`, `fix/session-timeout`, `refactor/error-handling`
 - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
+
+Choose the branch type from the primary intent of the change. Keep branch names
+lowercase, short, and hyphen-separated.
+
+## Pull Requests
+
+- Open PRs from the topic branch to `main`.
+- Use draft PRs by default unless the user explicitly asks for a ready PR.
+- Use Conventional Commit style for PR titles, matching the main commit:
+  `type(scope): description`.
+- Keep PRs scoped to one Story or one cohesive Task. Split unrelated cleanup,
+  design docs, and feature work into separate PRs.
+- Include verification commands in the PR body.
 
 ## API Response Conventions
 
@@ -51,6 +68,17 @@ job ID in `data`.
 - No circular dependencies between packages
 - Minimal exported API — expose only what is needed
 - Internal package communication via defined interfaces, not reaching into internals
+
+## Package Role Index
+
+- `internal/common/data`: pure application data types used by business logic.
+- `internal/common/dto`: API boundary types for serialization and deserialization.
+- `internal/manager/repository/db/entity`: database mapping types used only by the DB implementation.
+- `internal/common/encoding`: shared encoding helpers; do not use as a place for business types.
+- `internal/common/kernel`: runtime-facing kernel types and ports; split data and ports before broadening its use.
+- `internal/manager/runspec`: manager-specific run spec preparation.
+- `internal/manager/runspec/preset`: preset catalog, policy, and registry behavior.
+- `internal/manager/runspec/processor`: draft plus preset processing and finalization workflow.
 
 ## Go Server Structure
 

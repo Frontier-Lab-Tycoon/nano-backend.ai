@@ -2,7 +2,7 @@ package draft
 
 import (
 	"github.com/google/uuid"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/preset"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
 )
 
 // Draft is the persisted or processor-facing input used to create a finalized Spec.

@@ -7,7 +7,7 @@ package request
 
 import (
 	"github.com/google/uuid"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/draft"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/draft"
 )
 
 // RunDraftReq is the user-submitted input used to create a run draft.

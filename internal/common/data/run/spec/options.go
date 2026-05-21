@@ -1,6 +1,6 @@
 package spec
 
-import "github.com/seedspirit/nano-backend.ai/internal/common/run"
+import "github.com/seedspirit/nano-backend.ai/internal/common/data/run"
 
 // ModelOptions describes the finalized base model for a Run.
 type ModelOptions struct {

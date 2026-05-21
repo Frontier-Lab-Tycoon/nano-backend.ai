@@ -2,7 +2,7 @@ package preset
 
 import (
 	"github.com/google/uuid"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
 )
 
 // ID is the stable identity for a preset.

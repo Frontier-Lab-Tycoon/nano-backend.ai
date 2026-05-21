@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/spec"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
 )
 
 // RunRepository exposes run data needed by manager services.

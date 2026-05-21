@@ -1,12 +1,12 @@
-package runspec
+package processor
 
 import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/draft"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/preset"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/spec"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/draft"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
 )
 
 // FinalizeRunSpec combines a validated candidate into an immutable run Spec.
