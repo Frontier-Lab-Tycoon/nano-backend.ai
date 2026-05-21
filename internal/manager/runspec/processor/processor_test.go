@@ -1,4 +1,4 @@
-package runspec
+package processor
 
 import (
 	"context"
@@ -9,18 +9,18 @@ import (
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/draft"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
-	trainerpreset "github.com/seedspirit/nano-backend.ai/internal/manager/preset"
+	runspecpreset "github.com/seedspirit/nano-backend.ai/internal/manager/runspec/preset"
 )
 
 func TestPresetBackedProcessorOrchestratesLookupValidationAndFinalize(t *testing.T) {
 	ctx := context.Background()
 	runDraft := sampleDraft()
-	trainerPreset := trainerpreset.AxolotlLoRASFT()
+	trainerPreset := runspecpreset.AxolotlLoRASFT()
 	resourcePreset := testPreset{id: uuid.MustParse("4925e535-5afa-47ca-bd48-dad90d10954c")}
 	runDraft.PresetRefs.Resource = runPresetIDPtr(resourcePreset.PresetID())
 	registry := &recordingRegistry{
 		presets: map[preset.ID]preset.Preset{
-			trainerpreset.PresetAxolotlLoRASFT: &trainerPreset,
+			runspecpreset.PresetAxolotlLoRASFT: &trainerPreset,
 			resourcePreset.PresetID():          resourcePreset,
 		},
 	}
@@ -41,8 +41,8 @@ func TestPresetBackedProcessorOrchestratesLookupValidationAndFinalize(t *testing
 	if len(registry.requestedIDs) != 2 {
 		t.Fatalf("got registry ids %v, want trainer and resource ids in one lookup", registry.requestedIDs)
 	}
-	if registry.requestedIDs[0] != trainerpreset.PresetAxolotlLoRASFT {
-		t.Fatalf("got first registry id %s, want %s", registry.requestedIDs[0], trainerpreset.PresetAxolotlLoRASFT)
+	if registry.requestedIDs[0] != runspecpreset.PresetAxolotlLoRASFT {
+		t.Fatalf("got first registry id %s, want %s", registry.requestedIDs[0], runspecpreset.PresetAxolotlLoRASFT)
 	}
 	if registry.requestedIDs[1] != resourcePreset.PresetID() {
 		t.Fatalf("got second registry id %s, want %s", registry.requestedIDs[1], resourcePreset.PresetID())
@@ -53,8 +53,8 @@ func TestPresetBackedProcessorOrchestratesLookupValidationAndFinalize(t *testing
 	if validator.draft.ID != runDraft.ID {
 		t.Fatalf("validator got spec id %s, want %s", validator.draft.ID, runDraft.ID)
 	}
-	if validator.presetID != trainerpreset.PresetAxolotlLoRASFT {
-		t.Fatalf("validator got preset id %s, want %s", validator.presetID, trainerpreset.PresetAxolotlLoRASFT)
+	if validator.presetID != runspecpreset.PresetAxolotlLoRASFT {
+		t.Fatalf("validator got preset id %s, want %s", validator.presetID, runspecpreset.PresetAxolotlLoRASFT)
 	}
 	if validator.resourcePresetID != resourcePreset.PresetID() {
 		t.Fatalf("validator got resource preset id %s, want %s", validator.resourcePresetID, resourcePreset.PresetID())
@@ -66,11 +66,11 @@ func TestPresetBackedProcessorOrchestratesLookupValidationAndFinalize(t *testing
 
 func TestPresetBackedProcessorStopsOnValidationErrors(t *testing.T) {
 	runDraft := sampleDraft()
-	trainerPreset := trainerpreset.AxolotlLoRASFT()
+	trainerPreset := runspecpreset.AxolotlLoRASFT()
 	processor := PresetBackedProcessor{
 		Registry: &recordingRegistry{
 			presets: map[preset.ID]preset.Preset{
-				trainerpreset.PresetAxolotlLoRASFT: &trainerPreset,
+				runspecpreset.PresetAxolotlLoRASFT: &trainerPreset,
 			},
 		},
 		Validator: &recordingValidator{
@@ -111,11 +111,11 @@ func TestPresetBackedProcessorReturnsRegistryError(t *testing.T) {
 
 func TestReadPresets(t *testing.T) {
 	runDraft := sampleDraft()
-	trainerPreset := trainerpreset.AxolotlLoRASFT()
+	trainerPreset := runspecpreset.AxolotlLoRASFT()
 	processor := PresetBackedProcessor{
 		Registry: &recordingRegistry{
 			presets: map[preset.ID]preset.Preset{
-				trainerpreset.PresetAxolotlLoRASFT: &trainerPreset,
+				runspecpreset.PresetAxolotlLoRASFT: &trainerPreset,
 			},
 		},
 	}
@@ -124,8 +124,8 @@ func TestReadPresets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read presets: %v", err)
 	}
-	if got.Trainer == nil || got.Trainer.PresetID() != trainerpreset.PresetAxolotlLoRASFT {
-		t.Fatalf("got trainer preset %v, want %s", got.Trainer, trainerpreset.PresetAxolotlLoRASFT)
+	if got.Trainer == nil || got.Trainer.PresetID() != runspecpreset.PresetAxolotlLoRASFT {
+		t.Fatalf("got trainer preset %v, want %s", got.Trainer, runspecpreset.PresetAxolotlLoRASFT)
 	}
 }
 

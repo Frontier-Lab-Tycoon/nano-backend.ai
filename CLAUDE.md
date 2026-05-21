@@ -74,10 +74,11 @@ job ID in `data`.
 - `internal/common/data`: pure application data types used by business logic.
 - `internal/common/dto`: API boundary types for serialization and deserialization.
 - `internal/manager/repository/db/entity`: database mapping types used only by the DB implementation.
-- `internal/common/encoding`: shared serialization helpers; do not use as a place for business types.
+- `internal/common/encoding`: shared encoding helpers; do not use as a place for business types.
 - `internal/common/kernel`: runtime-facing kernel types and ports; split data and ports before broadening its use.
-- `internal/manager/runspec`: run spec workflow logic, not a data package.
-- `internal/manager/preset`: manager-owned preset catalog, policy, and registry behavior.
+- `internal/manager/runspec`: manager-specific run spec preparation.
+- `internal/manager/runspec/preset`: preset catalog, policy, and registry behavior.
+- `internal/manager/runspec/processor`: draft plus preset processing and finalization workflow.
 
 ## Go Server Structure
 

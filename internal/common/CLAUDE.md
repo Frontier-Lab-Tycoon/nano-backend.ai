@@ -6,7 +6,7 @@ This directory contains shared code that can be used across binaries and manager
 
 - `data/` — pure application data types used by business logic.
 - `dto/` — API boundary types used for serialization and deserialization.
-- `encoding/` — small serialization helpers.
+- `encoding/` — small shared encoding helpers.
 - `kernel/` — runtime-facing kernel types and ports.
 
 ## Constraints

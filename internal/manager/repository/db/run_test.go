@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
-	trainerpreset "github.com/seedspirit/nano-backend.ai/internal/manager/preset"
+	runspecpreset "github.com/seedspirit/nano-backend.ai/internal/manager/runspec/preset"
 )
 
 const (
@@ -65,7 +65,7 @@ func TestGetSpecUsesRunID(t *testing.T) {
 	projectID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 	specID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
 	runID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
-	trainerPresetID := trainerpreset.PresetAxolotlLoRASFT
+	trainerPresetID := runspecpreset.PresetAxolotlLoRASFT
 
 	if _, err := repo.db.ExecContext(ctx, `
 		INSERT INTO projects (id, name, description, created_at)

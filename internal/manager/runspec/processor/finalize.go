@@ -1,4 +1,4 @@
-package runspec
+package processor
 
 import (
 	"encoding/json"

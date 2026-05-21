@@ -1,4 +1,4 @@
-package runspec
+package processor
 
 import (
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/draft"

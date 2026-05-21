@@ -1,4 +1,4 @@
-package runspec
+package processor
 
 import (
 	"strings"
@@ -8,12 +8,12 @@ import (
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/draft"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
-	trainerpreset "github.com/seedspirit/nano-backend.ai/internal/manager/preset"
+	runspecpreset "github.com/seedspirit/nano-backend.ai/internal/manager/runspec/preset"
 )
 
 func TestFinalizeRunSpecMergesDefaultsAndParameters(t *testing.T) {
 	runDraft := sampleDraft()
-	trainerPreset := trainerpreset.AxolotlLoRASFT()
+	trainerPreset := runspecpreset.AxolotlLoRASFT()
 
 	finalized := FinalizeRunSpec(Candidate{Draft: &runDraft, Presets: preset.Presets{Trainer: &trainerPreset}})
 
@@ -38,7 +38,7 @@ func TestFinalizeRunSpecDoesNotMutatePresetDefaults(t *testing.T) {
 		},
 	}
 	trainerPreset := testPreset{
-		id:       trainerpreset.PresetAxolotlLoRASFT,
+		id:       runspecpreset.PresetAxolotlLoRASFT,
 		defaults: defaults,
 	}
 
@@ -64,7 +64,7 @@ func TestFinalizeRunSpecDoesNotMutatePresetDefaults(t *testing.T) {
 
 func TestCanonicalJSONIsDeterministic(t *testing.T) {
 	runDraft := sampleDraft()
-	trainerPreset := trainerpreset.AxolotlLoRASFT()
+	trainerPreset := runspecpreset.AxolotlLoRASFT()
 
 	finalized := FinalizeRunSpec(Candidate{Draft: &runDraft, Presets: preset.Presets{Trainer: &trainerPreset}})
 	first, err := CanonicalJSON(&finalized)
@@ -85,7 +85,7 @@ func TestCanonicalJSONIsDeterministic(t *testing.T) {
 
 func TestFinalizeRunSpecAppliesPresetDataAndKeepsPresetRefs(t *testing.T) {
 	runDraft := sampleDraft()
-	trainerPreset := trainerpreset.AxolotlLoRASFT()
+	trainerPreset := runspecpreset.AxolotlLoRASFT()
 	resourcePreset := optionPreset{
 		testPreset: testPreset{id: uuid.MustParse("4925e535-5afa-47ca-bd48-dad90d10954c")},
 		model:      preset.ModelOptions{BaseModel: "preset/model"},
@@ -121,8 +121,8 @@ func TestFinalizeRunSpecAppliesPresetDataAndKeepsPresetRefs(t *testing.T) {
 	if got := finalized.ResourceOptions.GPU.Count; got != 4 {
 		t.Fatalf("got gpu count %d, want preset override 4", got)
 	}
-	if finalized.PresetRefs.Trainer == nil || *finalized.PresetRefs.Trainer != trainerpreset.PresetAxolotlLoRASFT {
-		t.Fatalf("got trainer preset ref %v, want %s", finalized.PresetRefs.Trainer, trainerpreset.PresetAxolotlLoRASFT)
+	if finalized.PresetRefs.Trainer == nil || *finalized.PresetRefs.Trainer != runspecpreset.PresetAxolotlLoRASFT {
+		t.Fatalf("got trainer preset ref %v, want %s", finalized.PresetRefs.Trainer, runspecpreset.PresetAxolotlLoRASFT)
 	}
 	data, err := CanonicalJSON(&finalized)
 	if err != nil {
@@ -140,7 +140,7 @@ func sampleDraft() draft.Draft {
 		Name:        "mergeowl-exp-42",
 		Description: "LoRA SFT experiment",
 		PresetRefs: preset.Refs{
-			Trainer: runPresetIDPtr(trainerpreset.PresetAxolotlLoRASFT),
+			Trainer: runPresetIDPtr(runspecpreset.PresetAxolotlLoRASFT),
 		},
 		ModelOptions: draft.ModelOptionsReq{
 			BaseModel: "unsloth/Llama-3.1-8B",
