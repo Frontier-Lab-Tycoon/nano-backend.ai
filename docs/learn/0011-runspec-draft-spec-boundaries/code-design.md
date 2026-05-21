@@ -4,7 +4,7 @@
 
 이번 변경에서는 request 단계의 타입과 processor-facing domain 타입을 분리했다. `draft.Req`는 사용자가 제출하는 데이터만 표현하고, `draft.Draft`는 저장되었거나 processor로 전달될 수 있는 identity-bearing 모델을 표현한다.
 
-이 구분은 API boundary에서 중요하다. request body는 아직 서버가 부여한 identity를 갖지 않으므로 `ID`가 없어야 하고, 저장 이후 조회되거나 processor에서 다루는 객체는 추적 가능한 identity가 필요하다. 그래서 `draft.FromReq(id, req)`가 request data에 identity를 입히는 전환점 역할을 한다.
+이 구분은 API boundary에서 중요하다. request body는 아직 서버가 부여한 identity를 갖지 않으므로 `ID`가 없어야 하고, 저장 이후 조회되거나 processor에서 다루는 객체는 추적 가능한 identity가 필요하다. 그래서 `req.ToDraft(id)`가 request data에 identity를 입히는 전환점 역할을 한다.
 
 관련 코드:
 
