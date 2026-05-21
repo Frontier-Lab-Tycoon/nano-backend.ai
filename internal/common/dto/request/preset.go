@@ -2,7 +2,7 @@ package request
 
 import (
 	"github.com/google/uuid"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/preset"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
 )
 
 // PresetRefsReq selects optional preset categories by ID in a submitted request.

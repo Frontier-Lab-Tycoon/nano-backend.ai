@@ -1,6 +1,6 @@
 package draft
 
-import "github.com/seedspirit/nano-backend.ai/internal/common/run"
+import "github.com/seedspirit/nano-backend.ai/internal/common/data/run"
 
 // ModelOptionsReq describes the requested base model for a Draft.
 type ModelOptionsReq struct {

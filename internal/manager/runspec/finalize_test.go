@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/draft"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/preset"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/draft"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
 	trainerpreset "github.com/seedspirit/nano-backend.ai/internal/manager/preset"
 )
 

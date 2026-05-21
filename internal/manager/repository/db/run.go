@@ -8,10 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/preset"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/spec"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
-	"github.com/seedspirit/nano-backend.ai/internal/manager/repository/db/record"
+	"github.com/seedspirit/nano-backend.ai/internal/manager/repository/db/entity"
 )
 
 type queryerContext interface {
@@ -52,8 +52,8 @@ func (r *RunRepository) GetSpec(ctx context.Context, runID uuid.UUID) (spec.Spec
 	return row.ToSpec()
 }
 
-func getSpecByRunID(ctx context.Context, queryer queryerContext, runID uuid.UUID) (record.Spec, error) {
-	var row record.Spec
+func getSpecByRunID(ctx context.Context, queryer queryerContext, runID uuid.UUID) (entity.Spec, error) {
+	var row entity.Spec
 	err := queryer.GetContext(ctx, &row, `
 		SELECT specs.id, specs.project_id, specs.name, specs.description,
 			specs.model_options, specs.data_options, specs.resource_options,
@@ -63,18 +63,18 @@ func getSpecByRunID(ctx context.Context, queryer queryerContext, runID uuid.UUID
 		WHERE runs.id = ?
 	`, runID.String())
 	if errors.Is(err, sql.ErrNoRows) {
-		return record.Spec{}, errordef.ErrNotFound
+		return entity.Spec{}, errordef.ErrNotFound
 	}
 	if err != nil {
-		return record.Spec{}, fmt.Errorf("get spec for run %s: %w", runID, err)
+		return entity.Spec{}, fmt.Errorf("get spec for run %s: %w", runID, err)
 	}
 	specID, err := uuid.Parse(row.ID)
 	if err != nil {
-		return record.Spec{}, fmt.Errorf("parse spec id %q: %w", row.ID, err)
+		return entity.Spec{}, fmt.Errorf("parse spec id %q: %w", row.ID, err)
 	}
 	refs, err := getSpecPresetRefs(ctx, queryer, specID)
 	if err != nil {
-		return record.Spec{}, err
+		return entity.Spec{}, err
 	}
 	row.PresetRefs = refs
 	return row, nil

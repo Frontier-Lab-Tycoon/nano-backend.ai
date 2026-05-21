@@ -8,7 +8,7 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
-	"github.com/seedspirit/nano-backend.ai/internal/common/response"
+	"github.com/seedspirit/nano-backend.ai/internal/common/dto/response"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/servers/v1serv"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/service"
 )

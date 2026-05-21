@@ -1,12 +1,12 @@
-package record
+package entity
 
 import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
 	"github.com/seedspirit/nano-backend.ai/internal/common/encoding"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/preset"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/spec"
 )
 
 // Spec is the database record shape for a spec row.

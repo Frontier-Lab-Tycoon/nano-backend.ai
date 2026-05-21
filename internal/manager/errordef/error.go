@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/seedspirit/nano-backend.ai/internal/common/response"
+	"github.com/seedspirit/nano-backend.ai/internal/common/dto/response"
 )
 
 // ErrorCode identifies a machine-readable manager error class.

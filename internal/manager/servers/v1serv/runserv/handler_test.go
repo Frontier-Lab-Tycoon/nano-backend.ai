@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
-	"github.com/seedspirit/nano-backend.ai/internal/common/response"
-	"github.com/seedspirit/nano-backend.ai/internal/common/run/spec"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
+	"github.com/seedspirit/nano-backend.ai/internal/common/dto/response"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
 )
 
