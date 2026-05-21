@@ -52,6 +52,59 @@ job ID in `data`.
 - Minimal exported API — expose only what is needed
 - Internal package communication via defined interfaces, not reaching into internals
 
+## Go Server Structure
+
+Manager server code follows a layered structure. Keep dependency flow one-way:
+
+```text
+cmd/manager
+  -> internal/manager app/router composition
+    -> server/handler packages
+      -> service packages
+        -> repository ports
+          -> repository/db implementations
+```
+
+- `cmd/*` is the process entry point only: configure logging, load runtime config,
+  assemble dependencies, start the server.
+- `internal/manager` owns application composition: wire repositories, services,
+  handlers, and routes. Keep framework and infrastructure setup near this layer.
+- Handler/server packages translate transport concerns into application calls:
+  parse HTTP requests, validate transport-level input, call services, and write
+  response envelopes. They should not contain persistence or domain workflow logic.
+- Service packages own use cases and business workflow. They coordinate domain
+  objects, validation/finalization, repositories, and external ports.
+- Repository packages define persistence capabilities. Concrete backends such as
+  SQLite live under implementation packages like `repository/db`.
+
+## Interface Placement
+
+Use Go-style consumer-owned interfaces:
+
+- Define small interfaces in the package that consumes the dependency.
+- Include only the methods that consumer actually needs.
+- Return concrete structs from constructors unless callers need abstraction.
+- Let implementations satisfy interfaces implicitly; avoid `implements`-style
+  declarations or broad shared interfaces unless they are a real cross-package
+  contract.
+
+This keeps dependency direction stable. For example, a service may define the
+repository methods it needs, while a DB repository happens to satisfy that
+interface. The service then depends on behavior, not on SQLite or any concrete
+storage package.
+
+## Initialization And Ownership
+
+- Constructors should accept an `Args` struct when dependencies may grow.
+- Use pointer receivers and pointer dependencies for stateful components such
+  as services, repositories, handlers, DB pools, caches, and clients.
+- Pass domain/request value objects by value when they are small and immutable
+  for the operation; use pointers when nil is meaningful, mutation is intended,
+  or copying would be expensive.
+- Application composition should create concrete implementations and inject them
+  into consumers through their required interfaces.
+- Avoid package-level mutable globals for runtime dependencies.
+
 ## Test Principles
 
 - Unit tests: `_test.go` files alongside source

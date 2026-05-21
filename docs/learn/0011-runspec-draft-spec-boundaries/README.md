@@ -26,6 +26,6 @@ Date: 2026-05-17
 
 ## Further study
 
-- [ ] request handler에서 `draft.Req`를 받아 `draft.FromReq`로 identity를 부여하는 흐름 설계
+- [ ] request handler에서 `request.RunDraftReq`를 받아 `req.ToDraft`로 identity를 부여하는 흐름 설계
 - [ ] merged candidate validation과 finalized spec validation의 책임 분리 방식 검토
 - [ ] DB-backed preset registry에서 `GetMany`를 SQL `IN` query로 구현하는 패턴 정리

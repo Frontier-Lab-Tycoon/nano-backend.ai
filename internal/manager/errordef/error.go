@@ -1,8 +1,11 @@
 package errordef
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/seedspirit/nano-backend.ai/internal/common/response"
 )
 
 // ErrorCode identifies a machine-readable manager error class.
@@ -25,6 +28,12 @@ var (
 	ArtifactIndexMissing = ErrorCode{code: "artifact_index_missing", statusCode: http.StatusNotFound}
 	// InvalidInput indicates that a request or internal call passed invalid input.
 	InvalidInput = ErrorCode{code: "invalid_input", statusCode: http.StatusBadRequest}
+	// InvalidRunID indicates that a run ID path parameter is not a UUID.
+	InvalidRunID = ErrorCode{code: "invalid_run_id", statusCode: http.StatusBadRequest}
+	// Internal indicates an unexpected manager error.
+	Internal = ErrorCode{code: "internal_error", statusCode: http.StatusInternalServerError}
+	// NotImplemented indicates that a requested operation is not implemented.
+	NotImplemented = ErrorCode{code: "not_implemented", statusCode: http.StatusNotImplemented}
 )
 
 var (
@@ -36,6 +45,12 @@ var (
 	ErrArtifactIndexMissing = Error(ArtifactIndexMissing, "artifact index not found")
 	// ErrInvalidInput is the sentinel error for InvalidInput.
 	ErrInvalidInput = Error(InvalidInput, "invalid input")
+	// ErrInvalidRunID is the sentinel error for InvalidRunID.
+	ErrInvalidRunID = Error(InvalidRunID, "run ID must be a UUID")
+	// ErrInternal is the sentinel error for Internal.
+	ErrInternal = Error(Internal, "internal error")
+	// ErrNotImplemented is the sentinel error for NotImplemented.
+	ErrNotImplemented = Error(NotImplemented, "not implemented")
 )
 
 // Error creates an error with a stable machine-readable code.
@@ -72,4 +87,21 @@ func (e *err) Error() string {
 func (e *err) Is(target error) bool {
 	targetErr, ok := target.(*err)
 	return ok && e.errCode == targetErr.errCode
+}
+
+type codedError interface {
+	StatusCode() int
+	Code() string
+	Error() string
+}
+
+// Response converts a manager error into the standard API response envelope.
+func Response(source error, nextActionHint string, details any) (int, response.Response) {
+	var coded codedError
+	if errors.As(source, &coded) {
+		status := coded.StatusCode()
+		return status, response.Err(status, coded.Code(), coded.Error(), nextActionHint, details)
+	}
+	status := Internal.statusCode
+	return status, response.Err(status, Internal.code, ErrInternal.Error(), nextActionHint, details)
 }

@@ -135,34 +135,32 @@ func TestFinalizeRunSpecAppliesPresetDataAndKeepsPresetRefs(t *testing.T) {
 
 func sampleDraft() draft.Draft {
 	return draft.Draft{
-		ID: uuid.MustParse("11111111-1111-1111-1111-111111111111"),
-		Req: draft.Req{
-			ProjectID:   uuid.MustParse("22222222-2222-2222-2222-222222222222"),
-			Name:        "mergeowl-exp-42",
-			Description: "LoRA SFT experiment",
-			PresetRefs: preset.Refs{
-				Trainer: runPresetIDPtr(trainerpreset.PresetAxolotlLoRASFT),
+		ID:          uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		ProjectID:   uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+		Name:        "mergeowl-exp-42",
+		Description: "LoRA SFT experiment",
+		PresetRefs: preset.Refs{
+			Trainer: runPresetIDPtr(trainerpreset.PresetAxolotlLoRASFT),
+		},
+		ModelOptions: draft.ModelOptionsReq{
+			BaseModel: "unsloth/Llama-3.1-8B",
+		},
+		DataOptions: draft.DataOptionsReq{
+			Datasets: []draft.DatasetRefReq{
+				{Path: "mergeowl/v1", Split: "train"},
 			},
-			ModelOptions: draft.ModelOptionsReq{
-				BaseModel: "unsloth/Llama-3.1-8B",
-			},
-			DataOptions: draft.DataOptionsReq{
-				Datasets: []draft.DatasetRefReq{
-					{Path: "mergeowl/v1", Split: "train"},
-				},
-			},
-			ResourceOptions: draft.ResourceOptionsReq{
-				GPU:     run.GPUOptions{Count: 1},
-				Memory:  run.MemoryOptions{LimitBytes: 34359738368},
-				Timeout: run.TimeoutOptions{DurationSeconds: 14400},
-			},
-			TrainingOptions: draft.TrainingOptionsReq{
-				Parameters: map[string]any{
-					"learning_rate":  2.0e-4,
-					"lora_r":         32,
-					"max_seq_length": 4096,
-					"num_epochs":     3,
-				},
+		},
+		ResourceOptions: draft.ResourceOptionsReq{
+			GPU:     run.GPUOptions{Count: 1},
+			Memory:  run.MemoryOptions{LimitBytes: 34359738368},
+			Timeout: run.TimeoutOptions{DurationSeconds: 14400},
+		},
+		TrainingOptions: draft.TrainingOptionsReq{
+			Parameters: map[string]any{
+				"learning_rate":  2.0e-4,
+				"lora_r":         32,
+				"max_seq_length": 4096,
+				"num_epochs":     3,
 			},
 		},
 	}
