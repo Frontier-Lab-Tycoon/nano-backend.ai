@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/repository"
 )
@@ -16,6 +17,7 @@ type Args struct {
 // RunRepository is the persistence dependency required by the run service.
 type RunRepository interface {
 	GetSpec(ctx context.Context, id uuid.UUID) (spec.Spec, error)
+	ListProjectRuns(ctx context.Context, projectID uuid.UUID, limit int) ([]run.Run, error)
 }
 
 // Service provides run use cases.
@@ -33,4 +35,9 @@ func NewService(args Args) *Service {
 // GetSpec returns the spec associated with a run ID.
 func (s *Service) GetSpec(ctx context.Context, id uuid.UUID) (spec.Spec, error) {
 	return s.repo.GetSpec(ctx, id)
+}
+
+// ListProjectRuns returns the most recent runs associated with a project.
+func (s *Service) ListProjectRuns(ctx context.Context, projectID uuid.UUID, limit int) ([]run.Run, error) {
+	return s.repo.ListProjectRuns(ctx, projectID, limit)
 }

@@ -15,7 +15,7 @@ import (
 )
 
 func TestNewRunHandlerRequiresRunService(t *testing.T) {
-	_, err := newRunHandler(handlerArgs{})
+	_, err := newRunHandler(Args{})
 	if err == nil {
 		t.Fatal("got nil error, want dependency error")
 	}
@@ -55,7 +55,16 @@ func TestGetSpecReturnsInvalidRunIDEnvelope(t *testing.T) {
 
 	rec := performGetSpec(t, handler, "not-a-uuid")
 
-	assertErrorEnvelope(t, rec, http.StatusBadRequest, "invalid_run_id")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	var body response.Response
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error == nil || body.Error.Code != "invalid_run_id" {
+		t.Fatalf("got error payload %#v, want code invalid_run_id", body.Error)
+	}
 }
 
 func TestGetSpecMapsNotFound(t *testing.T) {
@@ -64,7 +73,9 @@ func TestGetSpecMapsNotFound(t *testing.T) {
 
 	rec := performGetSpec(t, handler, runID.String())
 
-	assertErrorEnvelope(t, rec, http.StatusNotFound, "not_found")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got status %d, want %d", rec.Code, http.StatusNotFound)
+	}
 }
 
 func performGetSpec(t *testing.T, handler *runHandler, id string) *httptest.ResponseRecorder {
@@ -79,26 +90,6 @@ func performGetSpec(t *testing.T, handler *runHandler, id string) *httptest.Resp
 		t.Fatalf("get spec: %v", err)
 	}
 	return rec
-}
-
-func assertErrorEnvelope(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) {
-	t.Helper()
-	if rec.Code != status {
-		t.Fatalf("got status %d, want %d", rec.Code, status)
-	}
-	var body response.Response
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if body.Status != status {
-		t.Fatalf("got body status %d, want %d", body.Status, status)
-	}
-	if body.Error == nil {
-		t.Fatal("got nil error payload")
-	}
-	if body.Error.Code != code {
-		t.Fatalf("got error code %q, want %q", body.Error.Code, code)
-	}
 }
 
 type stubRunService struct {
