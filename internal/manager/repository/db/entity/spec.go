@@ -6,20 +6,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
-	"github.com/seedspirit/nano-backend.ai/internal/common/encoding"
 )
 
 // Spec is the database record shape for a spec row.
 type Spec struct {
-	ID              string `db:"id"`
-	ProjectID       string `db:"project_id"`
-	Name            string `db:"name"`
-	Description     string `db:"description"`
-	ModelOptions    string `db:"model_options"`
-	DataOptions     string `db:"data_options"`
-	ResourceOptions string `db:"resource_options"`
-	TrainingOptions string `db:"training_options"`
-	CreatedAt       string `db:"created_at"`
+	ID              string                          `db:"id"`
+	ProjectID       string                          `db:"project_id"`
+	Name            string                          `db:"name"`
+	Description     string                          `db:"description"`
+	ModelOptions    jsonField[spec.ModelOptions]    `db:"model_options"`
+	DataOptions     jsonField[spec.DataOptions]     `db:"data_options"`
+	ResourceOptions jsonField[spec.ResourceOptions] `db:"resource_options"`
+	TrainingOptions jsonField[spec.TrainingOptions] `db:"training_options"`
+	CreatedAt       string                          `db:"created_at"`
 	PresetRefs      preset.Refs
 }
 
@@ -35,23 +34,15 @@ func (s *Spec) ToSpec() (spec.Spec, error) {
 	}
 
 	runSpec := spec.Spec{
-		ID:          id,
-		ProjectID:   projectID,
-		Name:        s.Name,
-		Description: s.Description,
-		PresetRefs:  s.PresetRefs,
-	}
-	if err := encoding.UnmarshalJSON(s.ModelOptions, &runSpec.ModelOptions); err != nil {
-		return spec.Spec{}, err
-	}
-	if err := encoding.UnmarshalJSON(s.DataOptions, &runSpec.DataOptions); err != nil {
-		return spec.Spec{}, err
-	}
-	if err := encoding.UnmarshalJSON(s.ResourceOptions, &runSpec.ResourceOptions); err != nil {
-		return spec.Spec{}, err
-	}
-	if err := encoding.UnmarshalJSON(s.TrainingOptions, &runSpec.TrainingOptions); err != nil {
-		return spec.Spec{}, err
+		ID:              id,
+		ProjectID:       projectID,
+		Name:            s.Name,
+		Description:     s.Description,
+		PresetRefs:      s.PresetRefs,
+		ModelOptions:    s.ModelOptions.Data,
+		DataOptions:     s.DataOptions.Data,
+		ResourceOptions: s.ResourceOptions.Data,
+		TrainingOptions: s.TrainingOptions.Data,
 	}
 
 	return runSpec, nil
