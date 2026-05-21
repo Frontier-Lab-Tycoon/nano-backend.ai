@@ -14,11 +14,6 @@ import (
 	"github.com/seedspirit/nano-backend.ai/internal/manager/repository/db/entity"
 )
 
-type queryerContext interface {
-	GetContext(ctx context.Context, dest any, query string, args ...any) error
-	SelectContext(ctx context.Context, dest any, query string, args ...any) error
-}
-
 // Args configures the SQLite run repository.
 type Args struct {
 	DBPath string
@@ -45,16 +40,8 @@ func (r *RunRepository) Close() error {
 
 // GetSpec returns the finalized spec for a run.
 func (r *RunRepository) GetSpec(ctx context.Context, runID uuid.UUID) (spec.Spec, error) {
-	row, err := getSpecByRunID(ctx, r.db, runID)
-	if err != nil {
-		return spec.Spec{}, err
-	}
-	return row.ToSpec()
-}
-
-func getSpecByRunID(ctx context.Context, queryer queryerContext, runID uuid.UUID) (entity.Spec, error) {
 	var row entity.Spec
-	err := queryer.GetContext(ctx, &row, `
+	err := r.db.GetContext(ctx, &row, `
 		SELECT specs.id, specs.project_id, specs.name, specs.description,
 			specs.model_options, specs.data_options, specs.resource_options,
 			specs.training_options, specs.created_at
@@ -63,29 +50,30 @@ func getSpecByRunID(ctx context.Context, queryer queryerContext, runID uuid.UUID
 		WHERE runs.id = ?
 	`, runID.String())
 	if errors.Is(err, sql.ErrNoRows) {
-		return entity.Spec{}, errordef.ErrNotFound
+		return spec.Spec{}, errordef.ErrNotFound
 	}
 	if err != nil {
-		return entity.Spec{}, fmt.Errorf("get spec for run %s: %w", runID, err)
+		return spec.Spec{}, fmt.Errorf("get spec for run %s: %w", runID, err)
 	}
 	specID, err := uuid.Parse(row.ID)
 	if err != nil {
-		return entity.Spec{}, fmt.Errorf("parse spec id %q: %w", row.ID, err)
+		return spec.Spec{}, fmt.Errorf("parse spec id %q: %w", row.ID, err)
 	}
-	refs, err := getSpecPresetRefs(ctx, queryer, specID)
+	refs, err := r.getSpecPresetRefs(ctx, specID)
 	if err != nil {
-		return entity.Spec{}, err
+		return spec.Spec{}, err
 	}
 	row.PresetRefs = refs
-	return row, nil
+
+	return row.ToSpec()
 }
 
-func getSpecPresetRefs(ctx context.Context, queryer queryerContext, specID uuid.UUID) (preset.Refs, error) {
+func (r *RunRepository) getSpecPresetRefs(ctx context.Context, specID uuid.UUID) (preset.Refs, error) {
 	var rows []struct {
 		Category string `db:"category"`
 		PresetID string `db:"preset_id"`
 	}
-	if err := queryer.SelectContext(ctx, &rows, `
+	if err := r.db.SelectContext(ctx, &rows, `
 		SELECT category, preset_id
 		FROM spec_preset_refs
 		WHERE spec_id = ?
