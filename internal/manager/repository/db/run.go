@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
@@ -66,6 +67,44 @@ func (r *RunRepository) GetSpec(ctx context.Context, runID uuid.UUID) (spec.Spec
 	row.PresetRefs = refs
 
 	return row.ToSpec()
+}
+
+// ListProjectRuns returns the most recent runs for a project.
+func (r *RunRepository) ListProjectRuns(ctx context.Context, projectID uuid.UUID, limit int) ([]run.Run, error) {
+	var exists int
+	err := r.db.GetContext(ctx, &exists, `
+		SELECT 1
+		FROM projects
+		WHERE id = ?
+	`, projectID.String())
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errordef.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("check project %s exists: %w", projectID, err)
+	}
+
+	var rows []entity.Run
+	if err := r.db.SelectContext(ctx, &rows, `
+		SELECT id, spec_id, idempotency_key, status, failure_reason,
+			created_at, started_at, finished_at
+		FROM runs
+		WHERE project_id = ?
+		ORDER BY created_at DESC
+		LIMIT ?
+	`, projectID.String(), limit); err != nil {
+		return nil, fmt.Errorf("list runs for project %s: %w", projectID, err)
+	}
+
+	runs := make([]run.Run, 0, len(rows))
+	for i := range rows {
+		item, err := rows[i].ToRun()
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, item)
+	}
+	return runs, nil
 }
 
 func (r *RunRepository) getSpecPresetRefs(ctx context.Context, specID uuid.UUID) (preset.Refs, error) {

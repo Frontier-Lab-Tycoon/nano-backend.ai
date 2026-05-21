@@ -9,12 +9,7 @@ import (
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
 	"github.com/seedspirit/nano-backend.ai/internal/common/dto/response"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
-	"github.com/seedspirit/nano-backend.ai/internal/manager/service"
 )
-
-type handlerArgs struct {
-	Services *service.Services
-}
 
 type runHandler struct {
 	svc runService
@@ -24,7 +19,7 @@ type runService interface {
 	GetSpec(ctx context.Context, runID uuid.UUID) (spec.Spec, error)
 }
 
-func newRunHandler(args handlerArgs) (*runHandler, error) {
+func newRunHandler(args Args) (*runHandler, error) {
 	if args.Services == nil || args.Services.RunSvc == nil {
 		return nil, errordef.Errorf(errordef.InvalidInput, "run service is required")
 	}

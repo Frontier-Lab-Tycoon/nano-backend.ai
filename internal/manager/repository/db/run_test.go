@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
 	runspecpreset "github.com/seedspirit/nano-backend.ai/internal/manager/runspec/preset"
 )
@@ -60,43 +61,15 @@ func TestMigrateIsIdempotent(t *testing.T) {
 }
 
 func TestGetSpecUsesRunID(t *testing.T) {
-	ctx := context.Background()
-	repo := newTestRunRepository(t, ctx)
-	projectID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	specID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
-	runID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
+	fixture := newRunRepositoryFixture(t)
+	projectID := fixture.givenProject()
+	specID := fixture.givenSpec(projectID, "mergeowl-exp-42")
+	runID := fixture.givenRunForSpec(projectID, specID, testCreatedAt)
 	trainerPresetID := runspecpreset.PresetAxolotlLoRASFT
 
-	if _, err := repo.db.ExecContext(ctx, `
-		INSERT INTO projects (id, name, description, created_at)
-		VALUES (?, ?, ?, ?)
-	`, projectID.String(), "mergeowl", "MergeOwl experiments", testCreatedAt); err != nil {
-		t.Fatalf("insert project: %v", err)
-	}
-	if _, err := repo.db.ExecContext(ctx, `
-		INSERT INTO specs (
-			id, project_id, name, description, model_options, data_options,
-			resource_options, training_options, created_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, specID.String(), projectID.String(), "mergeowl-exp-42", "LoRA SFT experiment",
-		testModelOptions, testDataOptions, testResourceOptions, testTrainingOptions, testCreatedAt); err != nil {
-		t.Fatalf("insert spec: %v", err)
-	}
-	if _, err := repo.db.ExecContext(ctx, `
-		INSERT INTO spec_preset_refs (spec_id, category, preset_id)
-		VALUES (?, ?, ?)
-	`, specID.String(), "trainer", trainerPresetID.String()); err != nil {
-		t.Fatalf("insert preset ref: %v", err)
-	}
-	if _, err := repo.db.ExecContext(ctx, `
-		INSERT INTO runs (id, project_id, spec_id, status, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, runID.String(), projectID.String(), specID.String(), "queued", testCreatedAt); err != nil {
-		t.Fatalf("insert run: %v", err)
-	}
+	fixture.givenTrainerPresetRef(specID, trainerPresetID)
 
-	got, err := repo.GetSpec(ctx, runID)
+	got, err := fixture.repo.GetSpec(fixture.ctx, runID)
 	if err != nil {
 		t.Fatalf("get spec by run id: %v", err)
 	}
@@ -107,9 +80,60 @@ func TestGetSpecUsesRunID(t *testing.T) {
 		t.Fatalf("got trainer preset ref %v, want %s", got.PresetRefs.Trainer, trainerPresetID)
 	}
 
-	_, err = repo.GetSpec(ctx, specID)
+	_, err = fixture.repo.GetSpec(fixture.ctx, specID)
 	if !errors.Is(err, errordef.ErrNotFound) {
 		t.Fatalf("got err %v, want ErrNotFound when using spec id", err)
+	}
+}
+
+func TestListProjectRunsReturnsMostRecentRunsWithinLimit(t *testing.T) {
+	fixture := newRunRepositoryFixture(t)
+	projectID := fixture.givenProject()
+	fixture.givenRun(projectID, "old", "2026-05-21T00:00:00Z")
+	middleRunID := fixture.givenRun(projectID, "middle", "2026-05-21T00:01:00Z")
+	newRunID := fixture.givenRun(projectID, "new", "2026-05-21T00:02:00Z")
+
+	got, err := fixture.repo.ListProjectRuns(fixture.ctx, projectID, 2)
+	if err != nil {
+		t.Fatalf("list project runs: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d runs, want 2", len(got))
+	}
+	if got[0].ID != newRunID {
+		t.Fatalf("got first run id %s, want %s", got[0].ID, newRunID)
+	}
+	if got[1].ID != middleRunID {
+		t.Fatalf("got second run id %s, want %s", got[1].ID, middleRunID)
+	}
+	if got[0].Lifecycle.Status != run.Queued {
+		t.Fatalf("got status %s, want %s", got[0].Lifecycle.Status, run.Queued)
+	}
+}
+
+func TestListProjectRunsReturnsEmptyForProjectWithoutRuns(t *testing.T) {
+	fixture := newRunRepositoryFixture(t)
+	projectID := fixture.givenProject()
+
+	got, err := fixture.repo.ListProjectRuns(fixture.ctx, projectID, 20)
+	if err != nil {
+		t.Fatalf("list project runs: %v", err)
+	}
+	if got == nil {
+		t.Fatal("got nil runs, want empty slice")
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d runs, want 0", len(got))
+	}
+}
+
+func TestListProjectRunsReturnsNotFoundForMissingProject(t *testing.T) {
+	fixture := newRunRepositoryFixture(t)
+	projectID := uuid.New()
+
+	_, err := fixture.repo.ListProjectRuns(fixture.ctx, projectID, 20)
+	if !errors.Is(err, errordef.ErrNotFound) {
+		t.Fatalf("got err %v, want ErrNotFound", err)
 	}
 }
 
@@ -127,4 +151,76 @@ func newTestRunRepository(t *testing.T, ctx context.Context) *RunRepository {
 		}
 	})
 	return repo
+}
+
+type runRepositoryFixture struct {
+	t    *testing.T
+	ctx  context.Context
+	repo *RunRepository
+}
+
+func newRunRepositoryFixture(t *testing.T) *runRepositoryFixture {
+	t.Helper()
+	ctx := context.Background()
+	return &runRepositoryFixture{
+		t:    t,
+		ctx:  ctx,
+		repo: newTestRunRepository(t, ctx),
+	}
+}
+
+func (f *runRepositoryFixture) givenProject() uuid.UUID {
+	f.t.Helper()
+	id := uuid.New()
+	if _, err := f.repo.db.ExecContext(f.ctx, `
+		INSERT INTO projects (id, name, description, created_at)
+		VALUES (?, ?, ?, ?)
+	`, id.String(), "mergeowl", "MergeOwl experiments", testCreatedAt); err != nil {
+		f.t.Fatalf("insert project: %v", err)
+	}
+	return id
+}
+
+func (f *runRepositoryFixture) givenSpec(projectID uuid.UUID, name string) uuid.UUID {
+	f.t.Helper()
+	id := uuid.New()
+	if _, err := f.repo.db.ExecContext(f.ctx, `
+		INSERT INTO specs (
+			id, project_id, name, description, model_options, data_options,
+			resource_options, training_options, created_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id.String(), projectID.String(), name, "LoRA SFT experiment",
+		testModelOptions, testDataOptions, testResourceOptions, testTrainingOptions, testCreatedAt); err != nil {
+		f.t.Fatalf("insert spec: %v", err)
+	}
+	return id
+}
+
+func (f *runRepositoryFixture) givenRun(projectID uuid.UUID, name, createdAt string) uuid.UUID {
+	f.t.Helper()
+	specID := f.givenSpec(projectID, name)
+	return f.givenRunForSpec(projectID, specID, createdAt)
+}
+
+func (f *runRepositoryFixture) givenRunForSpec(projectID, specID uuid.UUID, createdAt string) uuid.UUID {
+	f.t.Helper()
+	id := uuid.New()
+	if _, err := f.repo.db.ExecContext(f.ctx, `
+		INSERT INTO runs (id, project_id, spec_id, status, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, id.String(), projectID.String(), specID.String(), "queued", createdAt); err != nil {
+		f.t.Fatalf("insert run: %v", err)
+	}
+	return id
+}
+
+func (f *runRepositoryFixture) givenTrainerPresetRef(specID, presetID uuid.UUID) {
+	f.t.Helper()
+	if _, err := f.repo.db.ExecContext(f.ctx, `
+		INSERT INTO spec_preset_refs (spec_id, category, preset_id)
+		VALUES (?, ?, ?)
+	`, specID.String(), "trainer", presetID.String()); err != nil {
+		f.t.Fatalf("insert preset ref: %v", err)
+	}
 }
