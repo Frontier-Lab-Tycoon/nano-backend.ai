@@ -11,6 +11,7 @@ import (
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
+	"github.com/seedspirit/nano-backend.ai/internal/common/encoding"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/repository/db/entity"
 )
@@ -80,7 +81,7 @@ func (r *RunRepository) GetSpec(ctx context.Context, runID uuid.UUID) (spec.Spec
 	}
 	row.TrainingParameters = parameters
 
-	return row.ToSpec()
+	return row.ToData()
 }
 
 // ListProjectRuns returns the most recent runs for a project.
@@ -100,7 +101,7 @@ func (r *RunRepository) ListProjectRuns(ctx context.Context, projectID uuid.UUID
 
 	var rows []entity.Run
 	if err := r.db.SelectContext(ctx, &rows, `
-		SELECT id, spec_id, idempotency_key, status, failure_reason,
+		SELECT id, project_id, spec_id, idempotency_key, status, failure_reason,
 			created_at, started_at, finished_at
 		FROM runs
 		WHERE project_id = ?
@@ -112,13 +113,119 @@ func (r *RunRepository) ListProjectRuns(ctx context.Context, projectID uuid.UUID
 
 	runs := make([]run.Run, 0, len(rows))
 	for i := range rows {
-		item, err := rows[i].ToRun()
+		item, err := rows[i].ToData()
 		if err != nil {
 			return nil, err
 		}
 		runs = append(runs, item)
 	}
 	return runs, nil
+}
+
+// ProjectExists returns nil when the project exists, or errordef.ErrNotFound otherwise.
+func (r *RunRepository) ProjectExists(ctx context.Context, projectID uuid.UUID) error {
+	var exists int
+	err := r.db.GetContext(ctx, &exists, `SELECT 1 FROM projects WHERE id = ?`, projectID.String())
+	if errors.Is(err, sql.ErrNoRows) {
+		return errordef.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("check project %s exists: %w", projectID, err)
+	}
+	return nil
+}
+
+// CreateRun persists a spec and a queued run in a single transaction.
+func (r *RunRepository) CreateRun(ctx context.Context, runSpec *spec.Spec, runRecord *run.Run) error {
+	createdAt := encoding.FormatTime(runRecord.Lifecycle.CreatedAt)
+
+	specEntity, err := entity.FromData(runSpec, createdAt)
+	if err != nil {
+		return fmt.Errorf("convert spec: %w", err)
+	}
+
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin create-run tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := insertSpec(ctx, tx, &specEntity); err != nil {
+		return err
+	}
+	if err := insertRun(ctx, tx, runRecord, createdAt); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit create-run tx: %w", err)
+	}
+	return nil
+}
+
+func insertSpec(ctx context.Context, tx *sqlx.Tx, e *entity.Spec) error {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO specs (
+			id, project_id, name, description,
+			model_base_model,
+			resource_cpu_cores, resource_gpu_count,
+			resource_memory_limit_bytes, resource_timeout_duration_seconds,
+			created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, e.ID, e.ProjectID, e.Name, e.Description,
+		e.ModelBaseModel,
+		e.ResourceCPUCores, e.ResourceGPUCount,
+		e.ResourceMemoryLimitBytes, e.ResourceTimeoutDurationSeconds,
+		e.CreatedAt); err != nil {
+		return fmt.Errorf("insert spec %s: %w", e.ID, err)
+	}
+	for _, ds := range e.Datasets {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO spec_datasets (spec_id, ordinal, dataset_ref, split_name)
+			VALUES (?, ?, ?, ?)
+		`, e.ID, ds.Ordinal, ds.DatasetRef, ds.SplitName); err != nil {
+			return fmt.Errorf("insert spec dataset %s/%d: %w", e.ID, ds.Ordinal, err)
+		}
+	}
+	for _, p := range e.TrainingParameters {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO spec_training_parameters (spec_id, key, value)
+			VALUES (?, ?, ?)
+		`, e.ID, p.Key, p.Value); err != nil {
+			return fmt.Errorf("insert spec parameter %s/%s: %w", e.ID, p.Key, err)
+		}
+	}
+	for _, ref := range []struct {
+		category string
+		id       *uuid.UUID
+	}{
+		{string(preset.TrainerPreset), e.PresetRefs.Trainer},
+		{string(preset.ResourcePreset), e.PresetRefs.Resource},
+		{string(preset.OutputPreset), e.PresetRefs.Output},
+	} {
+		if ref.id == nil || *ref.id == uuid.Nil {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO spec_preset_refs (spec_id, category, preset_id)
+			VALUES (?, ?, ?)
+		`, e.ID, ref.category, ref.id.String()); err != nil {
+			return fmt.Errorf("insert spec preset ref %s/%s: %w", e.ID, ref.category, err)
+		}
+	}
+	return nil
+}
+
+func insertRun(ctx context.Context, tx *sqlx.Tx, r *run.Run, createdAt string) error {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO runs (
+			id, project_id, spec_id, status, created_at
+		) VALUES (?, ?, ?, ?, ?)
+	`, r.ID.String(), r.ProjectID.String(), r.SpecID.String(),
+		string(r.Lifecycle.Status), createdAt); err != nil {
+		return fmt.Errorf("insert run %s: %w", r.ID, err)
+	}
+	return nil
 }
 
 func (r *RunRepository) getSpecDatasets(ctx context.Context, specID uuid.UUID) ([]entity.SpecDataset, error) {

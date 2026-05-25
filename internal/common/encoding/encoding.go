@@ -4,6 +4,7 @@ package encoding
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -36,4 +37,26 @@ func ParseTime(s string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("parse time %q: %w", s, err)
 	}
 	return t, nil
+}
+
+// FormatNumber formats a numeric value as a JSON number literal. Accepts
+// json.Number, native ints, and floats so callers can persist or marshal
+// without committing to a specific Go type.
+func FormatNumber(value any) (string, error) {
+	switch v := value.(type) {
+	case json.Number:
+		return string(v), nil
+	case int:
+		return strconv.FormatInt(int64(v), 10), nil
+	case int32:
+		return strconv.FormatInt(int64(v), 10), nil
+	case int64:
+		return strconv.FormatInt(v, 10), nil
+	case float32:
+		return strconv.FormatFloat(float64(v), 'g', -1, 32), nil
+	case float64:
+		return strconv.FormatFloat(v, 'g', -1, 64), nil
+	default:
+		return "", fmt.Errorf("format number: unsupported type %T (value: %v)", value, value)
+	}
 }

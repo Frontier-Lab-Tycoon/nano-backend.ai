@@ -4,6 +4,9 @@ import (
 	"context"
 
 	"github.com/seedspirit/nano-backend.ai/internal/manager/repository"
+	"github.com/seedspirit/nano-backend.ai/internal/manager/runspec/preset"
+	"github.com/seedspirit/nano-backend.ai/internal/manager/runspec/specbuilder"
+	"github.com/seedspirit/nano-backend.ai/internal/manager/runspec/validator"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/servers"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/service"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/service/runsvc"
@@ -30,8 +33,15 @@ func NewApp(ctx context.Context, args Args) (*App, error) {
 		return nil, err
 	}
 
+	registry := preset.NewStaticRegistry(preset.Phase0Presets()...)
+	builder := specbuilder.PresetBacked{
+		Registry:  registry,
+		Validator: validator.Noop{},
+	}
+
 	services := service.NewServices().WithRunService(runsvc.Args{
 		Repositories: repositories,
+		SpecBuilder:  builder,
 	})
 	server, err := servers.NewServer(servers.ServerArgs{
 		Addr:     args.Addr,

@@ -28,6 +28,9 @@ var (
 	ArtifactIndexMissing = ErrorCode{code: "artifact_index_missing", statusCode: http.StatusNotFound}
 	// InvalidInput indicates that a request or internal call passed invalid input.
 	InvalidInput = ErrorCode{code: "invalid_input", statusCode: http.StatusBadRequest}
+	// ValidationError indicates a parsed request failed a domain or preset
+	// rule. Use InvalidInput for transport-level malformation.
+	ValidationError = ErrorCode{code: "validation_error", statusCode: http.StatusUnprocessableEntity}
 	// InvalidRunID indicates that a run ID path parameter is not a UUID.
 	InvalidRunID = ErrorCode{code: "invalid_run_id", statusCode: http.StatusBadRequest}
 	// Internal indicates an unexpected manager error.
@@ -45,6 +48,8 @@ var (
 	ErrArtifactIndexMissing = Error(ArtifactIndexMissing, "artifact index not found")
 	// ErrInvalidInput is the sentinel error for InvalidInput.
 	ErrInvalidInput = Error(InvalidInput, "invalid input")
+	// ErrValidation is the sentinel error for ValidationError.
+	ErrValidation = Error(ValidationError, "validation failed")
 	// ErrInvalidRunID is the sentinel error for InvalidRunID.
 	ErrInvalidRunID = Error(InvalidRunID, "run ID must be a UUID")
 	// ErrInternal is the sentinel error for Internal.

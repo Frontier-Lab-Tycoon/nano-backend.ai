@@ -12,6 +12,7 @@ import (
 // Run is the database record shape for a run row.
 type Run struct {
 	ID             string         `db:"id"`
+	ProjectID      string         `db:"project_id"`
 	SpecID         string         `db:"spec_id"`
 	IdempotencyKey sql.NullString `db:"idempotency_key"`
 	Status         string         `db:"status"`
@@ -21,11 +22,15 @@ type Run struct {
 	FinishedAt     sql.NullString `db:"finished_at"`
 }
 
-// ToRun converts the database record into the public run type.
-func (r *Run) ToRun() (run.Run, error) {
+// ToData converts the database record into the public run type.
+func (r *Run) ToData() (run.Run, error) {
 	id, err := uuid.Parse(r.ID)
 	if err != nil {
 		return run.Run{}, fmt.Errorf("parse run id %q: %w", r.ID, err)
+	}
+	projectID, err := uuid.Parse(r.ProjectID)
+	if err != nil {
+		return run.Run{}, fmt.Errorf("parse project id %q: %w", r.ProjectID, err)
 	}
 	specID, err := uuid.Parse(r.SpecID)
 	if err != nil {
@@ -61,6 +66,7 @@ func (r *Run) ToRun() (run.Run, error) {
 
 	result := run.Run{
 		ID:        id,
+		ProjectID: projectID,
 		SpecID:    specID,
 		Lifecycle: lifecycle,
 	}

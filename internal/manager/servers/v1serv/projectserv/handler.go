@@ -44,7 +44,7 @@ func (h *projectHandler) listRuns(c *echo.Context) error {
 	}
 
 	data := response.ProjectRunsData{
-		Runs:  response.NewRunSummaries(projectID, runs),
+		Runs:  response.NewRunSummaries(runs),
 		Limit: defaultProjectRunsLimit,
 	}
 	return c.JSON(http.StatusOK, response.OK(data))
