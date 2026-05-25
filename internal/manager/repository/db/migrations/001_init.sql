@@ -10,11 +10,31 @@ CREATE TABLE IF NOT EXISTS specs (
     project_id TEXT NOT NULL REFERENCES projects(id),
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    model_options TEXT NOT NULL,
-    data_options TEXT NOT NULL,
-    resource_options TEXT NOT NULL,
-    training_options TEXT NOT NULL,
+    -- TODO(normalize): split model_* into spec_model_options when more fields appear
+    model_base_model TEXT NOT NULL,
+    -- TODO(normalize): split resource_* into spec_resource_options when policy logic moves here
+    resource_cpu_cores                INTEGER NOT NULL DEFAULT 0,
+    resource_gpu_count                INTEGER NOT NULL,
+    resource_memory_limit_bytes       INTEGER NOT NULL,
+    resource_timeout_duration_seconds INTEGER NOT NULL,
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS spec_datasets (
+    spec_id     TEXT NOT NULL REFERENCES specs(id) ON DELETE CASCADE,
+    ordinal     INTEGER NOT NULL,
+    dataset_ref TEXT NOT NULL,
+    split_name  TEXT NOT NULL,
+    PRIMARY KEY (spec_id, ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS spec_training_parameters (
+    spec_id TEXT NOT NULL REFERENCES specs(id) ON DELETE CASCADE,
+    key     TEXT NOT NULL,
+    -- Stored as a JSON number literal (json.Number compatible: "3", "0.0002", "2.0e-4").
+    -- Server defers int/float decision; consumers (yaml emission, etc.) cast as needed.
+    value   TEXT NOT NULL,
+    PRIMARY KEY (spec_id, key)
 );
 
 CREATE TABLE IF NOT EXISTS preset_categories (

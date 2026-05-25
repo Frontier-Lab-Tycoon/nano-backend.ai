@@ -44,8 +44,10 @@ func (r *RunRepository) GetSpec(ctx context.Context, runID uuid.UUID) (spec.Spec
 	var row entity.Spec
 	err := r.db.GetContext(ctx, &row, `
 		SELECT specs.id, specs.project_id, specs.name, specs.description,
-			specs.model_options, specs.data_options, specs.resource_options,
-			specs.training_options, specs.created_at
+			specs.model_base_model,
+			specs.resource_cpu_cores, specs.resource_gpu_count,
+			specs.resource_memory_limit_bytes, specs.resource_timeout_duration_seconds,
+			specs.created_at
 		FROM runs
 		JOIN specs ON specs.id = runs.spec_id
 		WHERE runs.id = ?
@@ -65,6 +67,18 @@ func (r *RunRepository) GetSpec(ctx context.Context, runID uuid.UUID) (spec.Spec
 		return spec.Spec{}, err
 	}
 	row.PresetRefs = refs
+
+	datasets, err := r.getSpecDatasets(ctx, specID)
+	if err != nil {
+		return spec.Spec{}, err
+	}
+	row.Datasets = datasets
+
+	parameters, err := r.getSpecTrainingParameters(ctx, specID)
+	if err != nil {
+		return spec.Spec{}, err
+	}
+	row.TrainingParameters = parameters
 
 	return row.ToSpec()
 }
@@ -105,6 +119,31 @@ func (r *RunRepository) ListProjectRuns(ctx context.Context, projectID uuid.UUID
 		runs = append(runs, item)
 	}
 	return runs, nil
+}
+
+func (r *RunRepository) getSpecDatasets(ctx context.Context, specID uuid.UUID) ([]entity.SpecDataset, error) {
+	var rows []entity.SpecDataset
+	if err := r.db.SelectContext(ctx, &rows, `
+		SELECT ordinal, dataset_ref, split_name
+		FROM spec_datasets
+		WHERE spec_id = ?
+		ORDER BY ordinal
+	`, specID.String()); err != nil {
+		return nil, fmt.Errorf("get spec datasets %s: %w", specID, err)
+	}
+	return rows, nil
+}
+
+func (r *RunRepository) getSpecTrainingParameters(ctx context.Context, specID uuid.UUID) ([]entity.SpecTrainingParameter, error) {
+	var rows []entity.SpecTrainingParameter
+	if err := r.db.SelectContext(ctx, &rows, `
+		SELECT key, value
+		FROM spec_training_parameters
+		WHERE spec_id = ?
+	`, specID.String()); err != nil {
+		return nil, fmt.Errorf("get spec training parameters %s: %w", specID, err)
+	}
+	return rows, nil
 }
 
 func (r *RunRepository) getSpecPresetRefs(ctx context.Context, specID uuid.UUID) (preset.Refs, error) {
