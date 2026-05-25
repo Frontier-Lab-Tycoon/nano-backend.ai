@@ -1,4 +1,4 @@
-package processor
+package specbuilder
 
 import (
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/draft"

@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
+	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
 	runspecpreset "github.com/seedspirit/nano-backend.ai/internal/manager/runspec/preset"
 )
@@ -345,5 +347,94 @@ func (f *runRepositoryFixture) givenTrainerPresetRef(specID, presetID uuid.UUID)
 		VALUES (?, ?, ?)
 	`, specID.String(), "trainer", presetID.String()); err != nil {
 		f.t.Fatalf("insert preset ref: %v", err)
+	}
+}
+
+func TestCreateRunPersistsSpecAndRun(t *testing.T) {
+	fixture := newRunRepositoryFixture(t)
+	projectID := fixture.givenProject()
+	specValue := sampleSpec(projectID)
+	runValue := run.NewWithSpec(specValue.ID, projectID)
+
+	if err := fixture.repo.CreateRun(fixture.ctx, &specValue, &runValue); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	gotSpec, err := fixture.repo.GetSpec(fixture.ctx, runValue.ID)
+	if err != nil {
+		t.Fatalf("get spec by run id: %v", err)
+	}
+	if gotSpec.ID != specValue.ID {
+		t.Fatalf("got spec id %s, want %s", gotSpec.ID, specValue.ID)
+	}
+	if gotSpec.ModelOptions.BaseModel != "meta-llama/Llama-3-8B" {
+		t.Fatalf("got base model %q", gotSpec.ModelOptions.BaseModel)
+	}
+}
+
+func TestCreateRunRollsBackOnProjectFKViolation(t *testing.T) {
+	fixture := newRunRepositoryFixture(t)
+	missingProjectID := uuid.New()
+	specValue := sampleSpec(missingProjectID)
+	runValue := run.NewWithSpec(specValue.ID, missingProjectID)
+
+	err := fixture.repo.CreateRun(fixture.ctx, &specValue, &runValue)
+	if err == nil {
+		t.Fatal("got nil error, want FK violation")
+	}
+
+	for _, kv := range []struct {
+		query string
+		arg   string
+	}{
+		{`SELECT COUNT(*) FROM specs WHERE id = ?`, specValue.ID.String()},
+		{`SELECT COUNT(*) FROM runs WHERE id = ?`, runValue.ID.String()},
+	} {
+		var n int
+		if err := fixture.repo.db.GetContext(fixture.ctx, &n, kv.query, kv.arg); err != nil {
+			t.Fatalf("count %q: %v", kv.query, err)
+		}
+		if n != 0 {
+			t.Fatalf("query %q got %d rows after rollback, want 0", kv.query, n)
+		}
+	}
+}
+
+func TestProjectExistsReportsPresence(t *testing.T) {
+	fixture := newRunRepositoryFixture(t)
+	projectID := fixture.givenProject()
+
+	if err := fixture.repo.ProjectExists(fixture.ctx, projectID); err != nil {
+		t.Fatalf("existing project: %v", err)
+	}
+	if err := fixture.repo.ProjectExists(fixture.ctx, uuid.New()); !errors.Is(err, errordef.ErrNotFound) {
+		t.Fatalf("missing project got err %v, want ErrNotFound", err)
+	}
+}
+
+func sampleSpec(projectID uuid.UUID) spec.Spec {
+	specID := uuid.New()
+	trainerID := runspecpreset.PresetAxolotlLoRASFT
+	return spec.Spec{
+		ID:           specID,
+		ProjectID:    projectID,
+		Name:         "submission-1",
+		Description:  "",
+		PresetRefs:   preset.Refs{Trainer: &trainerID},
+		ModelOptions: spec.ModelOptions{BaseModel: "meta-llama/Llama-3-8B"},
+		DataOptions: spec.DataOptions{
+			Datasets: []spec.DatasetRef{{Path: "tatsu-lab/alpaca", Split: "train"}},
+		},
+		ResourceOptions: spec.ResourceOptions{
+			GPU:     run.GPUOptions{Count: 1},
+			Memory:  run.MemoryOptions{LimitBytes: 1 << 30},
+			Timeout: run.TimeoutOptions{DurationSeconds: 3600},
+		},
+		TrainingOptions: spec.TrainingOptions{
+			Parameters: map[string]any{
+				"learning_rate": 0.0002,
+				"num_epochs":    3,
+			},
+		},
 	}
 }

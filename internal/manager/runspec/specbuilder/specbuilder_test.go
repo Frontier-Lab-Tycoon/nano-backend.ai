@@ -1,4 +1,4 @@
-package processor
+package specbuilder
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	runspecpreset "github.com/seedspirit/nano-backend.ai/internal/manager/runspec/preset"
 )
 
-func TestPresetBackedProcessorOrchestratesLookupValidationAndFinalize(t *testing.T) {
+func TestPresetBackedOrchestratesLookupValidationAndFinalize(t *testing.T) {
 	ctx := context.Background()
 	runDraft := sampleDraft()
 	trainerPreset := runspecpreset.AxolotlLoRASFT()
@@ -25,14 +25,14 @@ func TestPresetBackedProcessorOrchestratesLookupValidationAndFinalize(t *testing
 		},
 	}
 	validator := &recordingValidator{}
-	processor := PresetBackedProcessor{
+	builder := PresetBacked{
 		Registry:  registry,
 		Validator: validator,
 	}
 
-	finalized, err := processor.Process(ctx, &runDraft)
+	finalized, err := builder.Build(ctx, &runDraft)
 	if err != nil {
-		t.Fatalf("process runspec: %v", err)
+		t.Fatalf("build runspec: %v", err)
 	}
 
 	if registry.callCount != 1 {
@@ -64,43 +64,39 @@ func TestPresetBackedProcessorOrchestratesLookupValidationAndFinalize(t *testing
 	}
 }
 
-func TestPresetBackedProcessorStopsOnValidationErrors(t *testing.T) {
+func TestPresetBackedStopsOnValidatorError(t *testing.T) {
 	runDraft := sampleDraft()
 	trainerPreset := runspecpreset.AxolotlLoRASFT()
-	processor := PresetBackedProcessor{
+	wantErr := errordef.Errorf(errordef.ValidationError, "training_options.parameters.lora_r: out of range")
+	builder := PresetBacked{
 		Registry: &recordingRegistry{
 			presets: map[preset.ID]preset.Preset{
 				runspecpreset.PresetAxolotlLoRASFT: &trainerPreset,
 			},
 		},
-		Validator: &recordingValidator{
-			errs: ValidationErrors{
-				{Field: "training_options.parameters.lora_r", Reason: "out of range"},
-			},
-		},
+		Validator: &recordingValidator{err: wantErr},
 	}
 
-	finalized, err := processor.Process(context.Background(), &runDraft)
+	finalized, err := builder.Build(context.Background(), &runDraft)
 	if err == nil {
-		t.Fatalf("expected validation error")
+		t.Fatalf("expected validator error")
 	}
-	var validationErrs ValidationErrors
-	if !errors.As(err, &validationErrs) {
-		t.Fatalf("got error %T %v, want ValidationErrors", err, err)
+	if !errors.Is(err, errordef.ErrValidation) {
+		t.Fatalf("got error %v, want ErrValidation", err)
 	}
 	if finalized.ID != uuid.Nil {
 		t.Fatalf("got finalized output %+v, want zero value", finalized)
 	}
 }
 
-func TestPresetBackedProcessorReturnsRegistryError(t *testing.T) {
+func TestPresetBackedReturnsRegistryError(t *testing.T) {
 	runDraft := sampleDraft()
-	processor := PresetBackedProcessor{
+	builder := PresetBacked{
 		Registry:  &recordingRegistry{err: errordef.ErrNotFound},
 		Validator: &recordingValidator{},
 	}
 
-	_, err := processor.Process(context.Background(), &runDraft)
+	_, err := builder.Build(context.Background(), &runDraft)
 	if err == nil {
 		t.Fatalf("expected registry error")
 	}
@@ -112,7 +108,7 @@ func TestPresetBackedProcessorReturnsRegistryError(t *testing.T) {
 func TestReadPresets(t *testing.T) {
 	runDraft := sampleDraft()
 	trainerPreset := runspecpreset.AxolotlLoRASFT()
-	processor := PresetBackedProcessor{
+	builder := PresetBacked{
 		Registry: &recordingRegistry{
 			presets: map[preset.ID]preset.Preset{
 				runspecpreset.PresetAxolotlLoRASFT: &trainerPreset,
@@ -120,7 +116,7 @@ func TestReadPresets(t *testing.T) {
 		},
 	}
 
-	got, err := processor.readPresets(context.Background(), &runDraft)
+	got, err := builder.readPresets(context.Background(), &runDraft)
 	if err != nil {
 		t.Fatalf("read presets: %v", err)
 	}
@@ -132,9 +128,9 @@ func TestReadPresets(t *testing.T) {
 func TestReadPresetsAllowsMissingTrainerSelector(t *testing.T) {
 	runDraft := sampleDraft()
 	runDraft.PresetRefs.Trainer = nil
-	processor := PresetBackedProcessor{}
+	builder := PresetBacked{}
 
-	got, err := processor.readPresets(context.Background(), &runDraft)
+	got, err := builder.readPresets(context.Background(), &runDraft)
 	if err != nil {
 		t.Fatalf("read presets: %v", err)
 	}
@@ -168,10 +164,10 @@ type recordingValidator struct {
 	draft            *draft.Draft
 	presetID         preset.ID
 	resourcePresetID preset.ID
-	errs             ValidationErrors
+	err              error
 }
 
-func (v *recordingValidator) Validate(candidate Candidate) ValidationErrors {
+func (v *recordingValidator) Validate(candidate Candidate) error {
 	v.called = true
 	v.draft = candidate.Draft
 	if candidate.Presets.Trainer != nil {
@@ -180,5 +176,5 @@ func (v *recordingValidator) Validate(candidate Candidate) ValidationErrors {
 	if candidate.Presets.Resource != nil {
 		v.resourcePresetID = candidate.Presets.Resource.PresetID()
 	}
-	return v.errs
+	return v.err
 }

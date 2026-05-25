@@ -1,4 +1,4 @@
-package processor
+package specbuilder
 
 import (
 	"context"
@@ -10,52 +10,52 @@ import (
 	"github.com/seedspirit/nano-backend.ai/internal/manager/errordef"
 )
 
-// Processor finalizes a submitted RunDraft for one submission mode.
-type Processor interface {
-	Process(ctx context.Context, runDraft *draft.Draft) (spec.Spec, error)
+// Builder turns a submitted RunDraft into an immutable Spec.
+type Builder interface {
+	Build(ctx context.Context, runDraft *draft.Draft) (spec.Spec, error)
 }
 
-// PresetRegistry is the preset lookup dependency consumed by PresetBackedProcessor.
+// PresetRegistry is the preset lookup dependency consumed by PresetBacked.
 type PresetRegistry interface {
 	GetMany(ctx context.Context, ids []preset.ID) (map[preset.ID]preset.Preset, error)
 }
 
-// Validator validates a draft plus resolved preset contracts.
+// Validator validates a draft plus resolved preset contracts
 type Validator interface {
-	Validate(candidate Candidate) ValidationErrors
+	Validate(candidate Candidate) error
 }
 
-// PresetBackedProcessor orchestrates preset lookup, validation, and finalization.
-type PresetBackedProcessor struct {
+// PresetBacked orchestrates preset lookup, validation, and finalization.
+type PresetBacked struct {
 	Registry  PresetRegistry
 	Validator Validator
 }
 
-// Process validates and finalizes a submitted RunDraft.
-func (p PresetBackedProcessor) Process(ctx context.Context, runDraft *draft.Draft) (spec.Spec, error) {
-	if p.Registry == nil {
+// Build validates and finalizes a submitted RunDraft.
+func (b PresetBacked) Build(ctx context.Context, runDraft *draft.Draft) (spec.Spec, error) {
+	if b.Registry == nil {
 		return spec.Spec{}, errordef.Errorf(errordef.InvalidInput, "preset registry is nil")
 	}
-	if p.Validator == nil {
+	if b.Validator == nil {
 		return spec.Spec{}, errordef.Errorf(errordef.InvalidInput, "runspec validator is nil")
 	}
 
-	presets, err := p.readPresets(ctx, runDraft)
+	presets, err := b.readPresets(ctx, runDraft)
 	if err != nil {
 		return spec.Spec{}, err
 	}
 	candidate := Candidate{Draft: runDraft, Presets: presets}
-	if validationErrs := p.Validator.Validate(candidate); validationErrs.HasAny() {
-		return spec.Spec{}, validationErrs
+	if err := b.Validator.Validate(candidate); err != nil {
+		return spec.Spec{}, err
 	}
 	return FinalizeRunSpec(candidate), nil
 }
 
-func (p PresetBackedProcessor) readPresets(ctx context.Context, runDraft *draft.Draft) (preset.Presets, error) {
+func (b PresetBacked) readPresets(ctx context.Context, runDraft *draft.Draft) (preset.Presets, error) {
 	if runDraft == nil {
 		return preset.Presets{}, errordef.Errorf(errordef.InvalidInput, "draft is nil")
 	}
-	resolved, err := p.readPreset(ctx, runDraft.PresetRefs)
+	resolved, err := b.readPreset(ctx, runDraft.PresetRefs)
 	if err != nil {
 		return preset.Presets{}, err
 	}
@@ -67,12 +67,12 @@ func (p PresetBackedProcessor) readPresets(ctx context.Context, runDraft *draft.
 }
 
 // TODO: Read preset data from database and cache it in memory for efficient lookup
-func (p PresetBackedProcessor) readPreset(ctx context.Context, refs preset.Refs) (map[preset.ID]preset.Preset, error) {
+func (b PresetBacked) readPreset(ctx context.Context, refs preset.Refs) (map[preset.ID]preset.Preset, error) {
 	ids := collectPresetIDs(refs)
 	if len(ids) == 0 {
 		return map[preset.ID]preset.Preset{}, nil
 	}
-	return p.Registry.GetMany(ctx, ids)
+	return b.Registry.GetMany(ctx, ids)
 }
 
 func collectPresetIDs(refs preset.Refs) []preset.ID {

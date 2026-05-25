@@ -17,6 +17,7 @@ func WithSubServer(g *echo.Group, args Args) error {
 		return err
 	}
 	runGroup := g.Group("/runs")
+	runGroup.POST("", handler.submit)
 	runGroup.GET("/:id/spec", handler.getSpec)
 	return nil
 }

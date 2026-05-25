@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
 )
 
@@ -27,10 +28,10 @@ type ProjectRunsData struct {
 }
 
 // NewRunSummary converts application run data into the external summary DTO.
-func NewRunSummary(projectID uuid.UUID, source *run.Run) RunSummary {
+func NewRunSummary(source *run.Run) RunSummary {
 	return RunSummary{
 		ID:             source.ID,
-		ProjectID:      projectID,
+		ProjectID:      source.ProjectID,
 		SpecID:         source.SpecID,
 		IdempotencyKey: source.IdempotencyKey,
 		Status:         source.Lifecycle.Status,
@@ -42,10 +43,10 @@ func NewRunSummary(projectID uuid.UUID, source *run.Run) RunSummary {
 }
 
 // NewRunSummaries converts application run data into external summary DTOs.
-func NewRunSummaries(projectID uuid.UUID, source []run.Run) []RunSummary {
+func NewRunSummaries(source []run.Run) []RunSummary {
 	summaries := make([]RunSummary, 0, len(source))
 	for i := range source {
-		summaries = append(summaries, NewRunSummary(projectID, &source[i]))
+		summaries = append(summaries, NewRunSummary(&source[i]))
 	}
 	return summaries
 }

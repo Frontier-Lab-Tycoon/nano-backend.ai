@@ -5,9 +5,11 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/spec"
+	"github.com/seedspirit/nano-backend.ai/internal/common/encoding"
 )
 
 // Spec is the database record shape for a spec row.
@@ -45,8 +47,8 @@ type SpecTrainingParameter struct {
 	Value string `db:"value"`
 }
 
-// ToSpec converts the database record into the public spec type.
-func (s *Spec) ToSpec() (spec.Spec, error) {
+// ToData converts the database record into the public spec type.
+func (s *Spec) ToData() (spec.Spec, error) {
 	id, err := uuid.Parse(s.ID)
 	if err != nil {
 		return spec.Spec{}, fmt.Errorf("parse spec id %q: %w", s.ID, err)
@@ -90,5 +92,52 @@ func (s *Spec) ToSpec() (spec.Spec, error) {
 		TrainingOptions: spec.TrainingOptions{
 			Parameters: parameters,
 		},
+	}, nil
+}
+
+// FromData converts a common Spec into the database entity form.
+func FromData(source *spec.Spec, createdAt string) (Spec, error) {
+	if source.ID == uuid.Nil {
+		return Spec{}, fmt.Errorf("spec id is required")
+	}
+	if source.ProjectID == uuid.Nil {
+		return Spec{}, fmt.Errorf("spec %s: project id is required", source.ID)
+	}
+
+	datasets := make([]SpecDataset, 0, len(source.DataOptions.Datasets))
+	for i, ds := range source.DataOptions.Datasets {
+		datasets = append(datasets, SpecDataset{
+			Ordinal:    i,
+			DatasetRef: ds.Path,
+			SplitName:  ds.Split,
+		})
+	}
+
+	parameters := make([]SpecTrainingParameter, 0, len(source.TrainingOptions.Parameters))
+	for key, value := range source.TrainingOptions.Parameters {
+		serialized, err := encoding.FormatNumber(value)
+		if err != nil {
+			return Spec{}, fmt.Errorf("spec %s training parameter %s: %w", source.ID, key, err)
+		}
+		parameters = append(parameters, SpecTrainingParameter{
+			Key:   key,
+			Value: serialized,
+		})
+	}
+
+	return Spec{
+		ID:                             source.ID.String(),
+		ProjectID:                      source.ProjectID.String(),
+		Name:                           source.Name,
+		Description:                    source.Description,
+		ModelBaseModel:                 source.ModelOptions.BaseModel,
+		ResourceCPUCores:               source.ResourceOptions.CPU.Cores,
+		ResourceGPUCount:               source.ResourceOptions.GPU.Count,
+		ResourceMemoryLimitBytes:       source.ResourceOptions.Memory.LimitBytes,
+		ResourceTimeoutDurationSeconds: source.ResourceOptions.Timeout.DurationSeconds,
+		CreatedAt:                      createdAt,
+		PresetRefs:                     source.PresetRefs,
+		Datasets:                       datasets,
+		TrainingParameters:             parameters,
 	}, nil
 }
