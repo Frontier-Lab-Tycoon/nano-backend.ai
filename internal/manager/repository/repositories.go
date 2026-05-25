@@ -11,9 +11,9 @@ type Args struct {
 	DBPath string
 }
 
-// Repositories groups manager persistence ports.
+// Repositories groups concrete manager repository instances.
 type Repositories struct {
-	Run RunRepository
+	Run *db.RunRepository
 }
 
 // NewRepositories opens and migrates the configured persistence backends.
