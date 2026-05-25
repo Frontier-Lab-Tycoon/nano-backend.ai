@@ -20,4 +20,4 @@ This directory contains database-backed repository implementations.
 
 ## Dependency Direction
 
-This layer may import common domain types, manager repository port types, manager error definitions, storage libraries, and local implementation packages. It must remain below services and handlers in the dependency graph.
+This layer may import common domain types, manager error definitions, storage libraries, and local implementation packages. It must remain below services and handlers in the dependency graph.

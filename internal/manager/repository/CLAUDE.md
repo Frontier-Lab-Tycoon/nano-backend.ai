@@ -1,20 +1,19 @@
-# Manager Repository Port Layer
+# Manager Repository Composition
 
-This directory defines persistence-facing manager contracts and repository registries.
+This directory composes concrete manager repository instances for application wiring.
 
 ## Responsibilities
 
-- Describe repository capabilities used by higher manager layers.
-- Group concrete repository instances for application wiring.
-- Keep persistence contracts small and named around application capabilities.
+- Construct concrete repository implementations from configuration.
+- Group concrete repository instances into a single value that the application layer can pass to services.
+- Own lifecycle for the repositories it constructs, including cleanup on partial failure.
 
 ## Constraints
 
 - Do not put storage queries, schema management, transaction helpers, or implementation-specific record mapping in this package.
 - Do not import service or server packages.
-- Avoid broad repository interfaces that expose methods unused by current services.
-- Prefer capability-oriented methods over storage-shape leakage. Method names and arguments should match application needs, not just persistence layout.
+- Do not define repository capability interfaces here. Consumer-owned interfaces belong in the service package that uses them.
 
 ## Dependency Direction
 
-Repository port packages may import common domain types. Concrete implementations live in subpackages such as `repository/db` and may satisfy these contracts implicitly.
+This package may import concrete repository implementations such as `repository/db`. Consumers receive the grouped struct and access fields by their concrete type; service packages should depend on their own locally-defined interfaces, not on these concrete types.
