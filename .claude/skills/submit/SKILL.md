@@ -239,7 +239,9 @@ Backend.AI's Manager/Agent/Storage structure, session lifecycle, API design, dom
      ...
    ```
 
-   If a linked issue exists, the PR body must include the issue context and how it was resolved:
+   **PR body style** — 짧고 의도 중심으로. 변경 파일 list (`pkg/module/file — what changed`) 는 절대 쓰지 말 것 — diff와 Files Changed 탭이 보여준다. 본문은 (a) 왜 필요한가, (b) 어떤 핵심 결정을 내렸나, (c) 어떻게 검증했나를 담는다.
+
+   If a linked issue exists:
 
    ```bash
    gh pr create --title "type(scope): description" --body "$(cat <<'EOF'
@@ -247,58 +249,31 @@ Backend.AI's Manager/Agent/Storage structure, session lifecycle, API design, dom
 
    Resolves #<number>
 
-   **Problem**: <What was wrong or missing? 1-2 sentences.>
+   <Problem statement — 한두 문장으로 무엇이 비어 있었거나 잘못됐었는지.>
 
    ## Solution
 
-   **Approach**: <Why this approach? Key design choice and reasoning.>
+   <Approach — 한두 문장. 동반 cleanup이 있으면 한 줄로 덧붙임.>
 
-   ### Changes
-   - `pkg/module/file` — <what changed and why>
-   - `pkg/module/file` — <what changed and why>
+   ## Key Decisions
 
-   ### Key Decisions
    | Decision | Why |
    |----------|-----|
-   | <e.g., used newtype pattern> | <reason> |
+   | <decision 1> | <reason> |
+   | <decision 2> | <reason> |
 
    ## What I learned
    <1-2 sentences linking to the learning doc directory>
    See: `docs/learn/NNNN-<slug>/`
 
    ## Test Plan
-   - [ ] <scenario: what is being verified>
-   - [ ] <scenario>
+   - [ ] <핵심 검증 시나리오>
+   - [ ] <핵심 검증 시나리오>
    EOF
    )"
    ```
 
-   If no linked issue:
-
-   ```bash
-   gh pr create --title "type(scope): description" --body "$(cat <<'EOF'
-   ## Background
-   <Why this change? What problem or need does it address?>
-
-   ## Changes
-   - `pkg/module/file` — <what changed and why>
-   - `pkg/module/file` — <what changed and why>
-
-   ### Key Decisions
-   | Decision | Why |
-   |----------|-----|
-   | <e.g., chose X over Y> | <reason> |
-
-   ## What I learned
-   <1-2 sentences linking to the learning doc directory>
-   See: `docs/learn/NNNN-<slug>/`
-
-   ## Test Plan
-   - [ ] <scenario: what is being verified>
-   - [ ] <scenario>
-   EOF
-   )"
-   ```
+   If no linked issue, replace `## Issue` with `## Background` (한두 문장 motivation) and keep the rest of the structure.
 
 3. Update the learning doc's PR number if it was "pending"
 
