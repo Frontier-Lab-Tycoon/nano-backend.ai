@@ -5,7 +5,7 @@ import (
 	"github.com/seedspirit/nano-backend.ai/internal/common/data/run/preset"
 )
 
-// Draft is the persisted or processor-facing input used to create a finalized Spec.
+// Draft is the persisted input used by a spec builder to create a finalized Spec.
 type Draft struct {
 	ID              uuid.UUID          `json:"id"`
 	ProjectID       uuid.UUID          `json:"project_id"`

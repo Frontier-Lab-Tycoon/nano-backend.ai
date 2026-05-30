@@ -62,7 +62,7 @@ idempotency_key: mergeowl-exp-42   # optional, prevents duplicate submissions
 | `project_id` | yes | Target project UUID. Human-friendly lookup can be provided by CLI/search. |
 | `name` | yes | Human-readable spec name. |
 | `description` | no | Human-readable description. |
-| `preset_refs.trainer` | no | Optional stable trainer preset UUID. Required when using the Phase 0 preset-backed processor. |
+| `preset_refs.trainer` | no | Optional stable trainer preset UUID. Required when using the Phase 0 preset-backed spec builder. |
 | `preset_refs.resource` | no | Optional resource preset ID for future resource default/policy bundles. |
 | `preset_refs.output` | no | Optional output preset ID for future artifact/output policy bundles. |
 | `model_options.base_model` | yes | HF Hub model ID or local asset URI. |
@@ -134,7 +134,7 @@ queued → preparing → running → succeeded
 | From | To | Notes |
 |------|----|-------|
 | `queued` | `preparing` | Scheduler assigns a GPU and begins preparation. |
-| `preparing` | `running` | Image, assets, mounts, and execution plan are ready. |
+| `preparing` | `running` | Image, assets, mounts, and workload preparation are ready. |
 | `preparing` | `failed` | Preparation failed; `failure_reason` is required. |
 | `running` | `succeeded` | Trainer exited 0 and required outputs were captured. |
 | `running` | `failed` | Trainer, timeout, OOM, or artifact capture failed; `failure_reason` is required. |
@@ -152,119 +152,105 @@ r.Transition(run.Fail("trainer_error"), now)
 
 `Next` is used for ordinary transitions. `Fail` is the only constructor that attaches a `FailureReason`, so callers cannot accidentally attach failure metadata to non-failed statuses.
 
-## 4.1 Execution & Runtime Architecture
+## 4.1 Workload Architecture
 
-The platform treats Docker as a **runtime substrate**, not a user-facing abstraction. All Docker-specific concerns are isolated behind a narrow adapter so that upper layers remain runtime-agnostic.
+The platform treats Docker as an agent-side workload substrate, not as a user-facing abstraction. Manager-side scheduling code depends on a narrow workload contract. Docker SDK types and container-specific details stay inside the agent-side Docker workload backend.
 
-### Two-Stage Immutable Plan
+### Components
 
-Execution proceeds through two immutable data structures:
+| Component | Responsibility | Knows Docker? |
+|-----------|----------------|---------------|
+| SpecBuilder | Finalize a submitted `draft.Draft` into an immutable `spec.Spec` for one submission mode. | No |
+| ScheduleCoordinator | Own run lifecycle transitions, call provisioning/launch ports, and reconcile terminal state. | No |
+| WorkloadProvisioner | Claim capacity, choose the agent/GPU/storage binding, and build a `WorkloadPlan`. | No |
+| WorkloadLauncher | Manager-side port for preparing, starting, and cleaning up a workload. | No |
+| HTTPWorkloadLauncher | First concrete manager-to-agent REST client adapter for `WorkloadLauncher`. | Transport only |
+| DockerWorkloadBackend | Agent-internal implementation that materializes the workload as a Docker container. | Yes |
 
-1. **ExecutionIntent** (logical plan) — produced by the submit/queue layer.
-   - `run_id`, `preset_refs`, `image_ref`, `env`, `command`
-   - Required resources: `gpu: 1` (logical count, not index)
-   - Required mounts: `workspace`, `artifacts`, `cache` (logical names)
-   - finalized training options path meaning (logical; materialized as YAML only at the runtime boundary when needed)
-   - Outputs contract
-   - **No Docker types. No GPU index. No host path.**
+MVP does not need a general scheduler framework, handler DSL, or external hint store. A small `ScheduleCoordinator` plus repository state is sufficient for the single-node Phase 0 target.
 
-2. **ExecutionPlan** (bound plan) — produced by the scheduler + allocator, consumed by the executor.
-   - Assigned GPU index (e.g., `0` or `1`)
-   - Selected node / daemon endpoint
-   - Concrete host mount paths
-   - Temp log / work directories
-   - Concrete runtime env vars
-   - Final image ref and pull policy
-   - **All values required for execution are fully resolved.**
+### WorkloadPlan
 
-The executor's `Create()` and `Start()` must **materialize only** — they do not resolve or decide dynamic values. This preserves idempotency, reproducibility, and keeps multi-node extension (Phase 3) outside the executor.
+`WorkloadPlan` is the fully bound workload request created after a queued run has been selected and capacity has been claimed. It contains the values the agent needs to prepare and start the trainer container:
 
-### Layer Boundaries
+- Run, project, and spec IDs
+- Trainer image ref, entrypoint/command, and environment
+- Assigned agent ID
+- Assigned agent-local GPU index (`0` or `1`)
+- Agent-visible workspace, cache, artifact, log, and config paths or refs
+- Timeout and output expectations needed for Phase 0 validation
 
-| Layer | Knows Docker? | Responsibility |
-|-------|---------------|----------------|
-| Submit / Queue | No | Produce `ExecutionIntent` |
-| RunSpec Processor | No | Finalize a submitted `draft.Draft` for one submission mode |
-| Scheduler / Allocator | No | Bind resources, produce `ExecutionPlan` |
-| Executor | Yes (adapter only) | Materialize `ExecutionPlan` via runtime interface |
+`WorkloadPlan` must not contain Docker SDK types, raw Docker container config, or manager-local filesystem assumptions. The agent-side backend may translate it into Docker-specific options only after the manager-agent boundary.
 
-### Runtime Interface (Go)
+### WorkloadLauncher Contract
 
-The executor depends on a runtime interface defined in `pkg/executor/runtime.go`. The Docker adapter lives only in `internal/executor/docker`.
+The initial public port is intentionally small:
 
 ```go
-type Runtime interface {
-    EnsureImage(ctx context.Context, ref string, policy PullPolicy) error
-    Create(ctx context.Context, plan ExecutionPlan) (ContainerHandle, error)
-    Start(ctx context.Context, handle ContainerHandle) error
-    Wait(ctx context.Context, handle ContainerHandle) (ExitResult, error)
-    Inspect(ctx context.Context, handle ContainerHandle) (ContainerInfo, error)
-    Remove(ctx context.Context, handle ContainerHandle, force bool) error
-    StreamLogs(ctx context.Context, handle ContainerHandle, opts LogOptions) (io.ReadCloser, error)
-}
-
-type ContainerHandle struct {
-    ID   string // Docker container ID
-    Node string // empty in single-node MVP; daemon endpoint in Phase 3 multi-node
-}
-
-type ExecutionPlan struct {
-    RunID      string
-    ImageRef   string
-    GPUIndex   int          // concrete, assigned by allocator
-    Env        []string
-    Cmd        []string
-    HostMounts []Mount
-    TempDirs   []TempDir
-    // ... other bound fields
-}
-
-type ExitResult struct {
-    ExitCode  int
-    OOMKilled bool
-    Error     error
+type WorkloadLauncher interface {
+    Prepare(ctx context.Context, plan WorkloadPlan) (WorkloadRef, error)
+    Start(ctx context.Context, ref WorkloadRef) error
+    Cleanup(ctx context.Context, ref WorkloadRef) error
 }
 ```
 
-Upper layers must not import Docker SDK types. The interface is the only contract.
+`WorkloadRef` is an opaque reference to an agent-side prepared workload. It should carry enough identity to route later calls, such as run ID, agent ID, and an agent workload ID, without exposing a Docker container ID as a manager-domain concept.
 
-### MVP Executor Scope
+`Wait`, `Inspect`, `StreamLogs`, `Remove`, and explicit image-management methods are not part of this initial port. The launcher triggers and materializes work; the `ScheduleCoordinator` owns terminal observation, failure mapping, and finalization through a reconcile path.
 
-The Docker adapter implements exactly these operations for Phase 0:
+### Manager-Agent Boundary
 
-- `image_ensure` / `image_pull` (with cache check)
-- `container_create`
-- `container_start`
-- `container_wait`
-- `container_inspect`
-- `container_remove`
-- `logs_stream` / `artifact_verify`
+The first concrete manager-agent adapter is REST/HTTP. The common workload contract remains transport-agnostic so another transport can be introduced later without changing scheduling code.
 
-Everything else (networks, volumes beyond bind mounts, multi-GPU per container, Swarm, registry auth) is out of scope for MVP.
+Initial agent workload endpoints:
+
+| Method | Path | Meaning |
+|--------|------|---------|
+| POST | `/v1/workloads/prepare` | Materialize a `WorkloadPlan` into a prepared agent-side workload and return a `WorkloadRef`. |
+| POST | `/v1/workloads/{workload_ref}/start` | Start the prepared workload. |
+| POST | `/v1/workloads/{workload_ref}/cleanup` | Best-effort cleanup after terminal or preparation failure paths. |
+| GET | `/v1/workloads/{workload_ref}/status` | Return minimal observed status, exit code, OOM/timeout signals, and failure detail where available. |
+
+HTTP request/response DTOs belong at the transport boundary. They must not leak into `internal/common/workload`.
+
+### Docker Workload Scope
+
+The Docker workload backend implements only the Phase 0 operations needed behind the agent API:
+
+- Pull or verify the trainer image during preparation
+- Create the container from the bound `WorkloadPlan`
+- Start the container
+- Observe container exit, exit code, timeout, and OOM where detectable
+- Preserve stdout/stderr and partial artifacts
+- Remove or clean up the prepared workload on best effort
+
+Everything else, including Docker networks, Docker volumes beyond bind mounts, multi-GPU-per-container training, Swarm/Kubernetes, registry auth hardening, and live log streaming, is out of scope for MVP.
 
 ### GPU Assignment
 
 - One container receives exactly one GPU index (`NVIDIA_VISIBLE_DEVICES=i` or `--gpus '"device=i"'`).
-- The allocator assigns the index; the executor only materializes it.
+- `WorkloadProvisioner` assigns the agent-local GPU index; `DockerWorkloadBackend` only materializes it.
 - This makes GPU scheduling explicit and traceable.
 
 ### Failure Taxonomy Mapping (Preparing Phase)
 
-The `preparing` state maps to concrete runtime operations:
+The `preparing` state maps to concrete workload preparation operations:
 
-| Runtime Operation | Failure Reason |
-|-------------------|----------------|
+| Operation | Failure Reason |
+|-----------|----------------|
 | Image pull | `image_pull_failed` |
 | Container create | `container_create_failed` |
+| Model download | `model_download_failed` |
+| Dataset stage | `dataset_stage_failed` |
 | (other) | `unknown` |
 
 This gives the agent a clear signal without parsing raw Docker stderr.
 
 ### Extension Path
 
-- **Phase 2**: Cancel (SIGTERM → SIGKILL timeout), OOM detection, orphan cleanup
-- **Phase 3**: Multi-node — allocator binds `node + daemon_endpoint + gpu_index` into `ExecutionPlan`; executor interface stays unchanged
-- **Phase 4**: Cache / volume policy — storage planner binds concrete mount paths; executor still only materializes
+- **Phase 2**: Cancel (SIGTERM to SIGKILL timeout), OOM detection hardening, orphan cleanup.
+- **Phase 3**: Multi-node scheduling by binding `agent_id + agent endpoint + gpu_index` in `WorkloadPlan`.
+- **Phase 4**: Cache and volume policy through a storage planner that binds concrete agent-visible paths before launch.
 
 ## 5. Failure Taxonomy
 
@@ -316,14 +302,14 @@ Validation happens in two layers:
 - The core is the single source of truth for run creation rules.
 - New entry points (CLI, batch submitter, future k8s controller) must route through the same core validator.
 
-**RunSpec processing**
-- `runspec.Processor` is the common interface for finalizing one submitted `draft.Draft` mode into an immutable `spec.Spec`.
-- `runspec.PresetBackedProcessor` implements preset-backed processing: preset lookup, validation, and finalization.
-- `runspec.PresetBackedProcessor` depends on `PresetRegistry` and `runspec.Validator` interfaces rather than concrete implementations.
-- `runspec.Validator` validates a `runspec.Candidate` (`Draft + Presets`) only; it does not merge defaults or produce finalized output.
+**RunSpec finalization**
+- `specbuilder.Builder` is the common interface for finalizing one submitted `draft.Draft` mode into an immutable `spec.Spec`.
+- `specbuilder.PresetBacked` implements preset-backed spec building: preset lookup, validation, and finalization.
+- `specbuilder.PresetBacked` depends on `PresetRegistry` and `specbuilder.Validator` interfaces rather than concrete implementations.
+- `specbuilder.Validator` validates a `specbuilder.Candidate` (`Draft + Presets`) only; it does not merge defaults or produce finalized output.
 - `FinalizeRunSpec` accepts a validated candidate, applies preset data and user parameters, and returns the immutable `spec.Spec`.
-- Submitted `preset_refs` are nullable in `draft.Draft`; preset-backed processing reads the selected preset data and carries the refs into `spec.Spec` as provenance.
-- The submit/API layer chooses the processor for the submission mode; raw/custom submission should use a separate processor instead of adding mode branches inside `PresetBackedProcessor`.
+- Submitted `preset_refs` are nullable in `draft.Draft`; preset-backed spec building reads the selected preset data and carries the refs into `spec.Spec` as provenance.
+- The submit/API layer chooses the builder for the submission mode; raw/custom submission should use a separate builder instead of adding mode branches inside `specbuilder.PresetBacked`.
 
 **Idempotency in the core**
 - Same `idempotency_key` + same normalized spec → return existing run.
@@ -592,12 +578,22 @@ CREATE TABLE runs (
     status TEXT NOT NULL,
     failure_reason TEXT,
     artifact_path TEXT,
+    assigned_agent_id TEXT,
+    assigned_gpu_index INTEGER,
+    workload_ref TEXT,
     idempotency_key TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     started_at DATETIME,
     finished_at DATETIME,
-    UNIQUE(project_id, idempotency_key)
+    UNIQUE(project_id, idempotency_key),
+    CHECK(assigned_gpu_index IS NULL OR assigned_gpu_index IN (0, 1))
 );
+
+CREATE UNIQUE INDEX active_gpu_assignments
+ON runs(assigned_agent_id, assigned_gpu_index)
+WHERE status IN ('preparing', 'running')
+  AND assigned_agent_id IS NOT NULL
+  AND assigned_gpu_index IS NOT NULL;
 
 CREATE TABLE artifacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -618,9 +614,12 @@ MVP scheduling is intentionally trivial because the hardware is fixed (single no
 - **Policy**: FIFO per GPU. No preemption, no bin-packing, no priority queues.
 - **Concurrency**: One run per GPU. Maximum two runs may have an assigned GPU simultaneously.
 - **GPU selection**: Assign the first free GPU (0 or 1). If both are free, prefer GPU 0.
-- **Resource claim**: A run reserves exactly one GPU while it is in `preparing` or `running`.
+- **Resource claim**: `WorkloadProvisioner` records `assigned_agent_id` and `assigned_gpu_index` when moving a run from `queued` to `preparing`.
+- **Active capacity**: A run reserves exactly one GPU while it is in `preparing` or `running`. Terminal runs may keep assignment fields for audit, but they no longer count as active capacity.
+- **Workload reference**: `workload_ref` is recorded after `WorkloadLauncher.Prepare` succeeds so later `Start`, `Cleanup`, and observation calls can route to the same agent-side workload.
 - **Queue behavior**: If both GPUs are busy, new runs stay in `queued` until a GPU frees.
 - **Re-queue**: A `failed` run is never automatically retried. The agent must submit a new run.
+- **Recovery**: The coordinator may use a periodic reconcile loop to recover missed wake-ups. MVP does not require Valkey/Redis or a distributed lock service.
 
 This avoids distributed-scheduler complexity while keeping behavior predictable and observable.
 

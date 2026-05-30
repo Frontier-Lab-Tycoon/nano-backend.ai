@@ -78,7 +78,7 @@ job ID in `data`.
 - `internal/common/kernel`: runtime-facing kernel types and ports; split data and ports before broadening its use.
 - `internal/manager/runspec`: manager-specific run spec preparation.
 - `internal/manager/runspec/preset`: preset catalog, policy, and registry behavior.
-- `internal/manager/runspec/processor`: draft plus preset processing and finalization workflow.
+- `internal/manager/runspec/specbuilder`: draft plus preset finalization workflow that builds immutable specs.
 
 ## Go Server Structure
 

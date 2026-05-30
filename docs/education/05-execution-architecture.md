@@ -1,203 +1,96 @@
-# Execution Architecture: Why SDK, Why Two Plans, and Why Boundaries Matter
+# Workload Architecture: Why Boundaries Matter
 
-## The real problem we are solving
-The platform is not trying to automate `docker run`.
-It is trying to execute a **reproducible run state machine**.
+## The Problem We Are Solving
 
-That difference matters.
+nano-backend.ai is not trying to automate `docker run`. It is trying to run a reproducible fine-tuning state machine with explicit scheduling, artifact, and failure semantics.
 
-If Docker is treated as a shell command, logic tends to leak into scripts:
-- text parsing replaces structured state,
-- runtime decisions become hard to trace,
-- scheduling and execution get mixed together,
-- failure reasons become vague.
+Docker is still the Phase 0 substrate, but it should live behind the agent-side workload backend. Manager-side code should talk in workload concepts: what has been scheduled, which agent/GPU has been assigned, what prepared workload should be started, and how terminal state is observed.
 
-If Docker is treated as a runtime substrate behind a narrow adapter, the system can keep state transitions, resource binding, and failure taxonomy explicit.
-
-## End-to-end flow
-A useful mental model is:
+## End-to-End Flow
 
 ```text
-RunSpec
--> preset validation / config merge
--> resolved_config.yaml
--> ExecutionIntent
--> scheduler / allocator
--> ExecutionPlan
--> runtime adapter (EnsureImage -> Create -> Start -> Wait)
--> state transitions and artifact capture
+RunDraft
+-> API preflight validation
+-> specbuilder.Builder
+-> immutable spec.Spec
+-> SQLite run ledger
+-> ScheduleCoordinator
+-> WorkloadProvisioner
+-> WorkloadPlan
+-> WorkloadLauncher
+-> HTTPWorkloadLauncher
+-> DockerWorkloadBackend
+-> artifact store and terminal reconciliation
 ```
 
 The questions are deliberately split:
-- **submit path**: what should run?
-- **scheduler / allocator**: where and with which resources should it run?
-- **executor / runtime**: can the runtime materialize this bound plan?
 
-That separation is what keeps the system legible.
+- **Submit path**: what should run?
+- **ScheduleCoordinator**: when should a queued run advance?
+- **WorkloadProvisioner**: which agent, GPU, paths, and refs are bound?
+- **WorkloadLauncher**: how does the manager ask the agent to prepare/start/cleanup?
+- **DockerWorkloadBackend**: how does the agent materialize that workload as a container?
 
-## Why SDK-first over CLI
-The CLI is not useless. It is great for human debugging.
-An operator can always inspect a container manually.
+## WorkloadPlan
 
-But the main product path is not for humans typing commands. It is for the platform running a state machine reliably.
+`WorkloadPlan` is the bound workload request. It is created after capacity has been claimed and should contain the values an agent needs to prepare and start a trainer container:
 
-| Concern | CLI-first | SDK-first |
-|---|---|---|
-| State transitions | infer by parsing output | map directly to runtime operations |
-| Error handling | text/regex heavy | typed API responses |
-| Cancel / wait / inspect | script coordination | direct runtime calls |
-| Failure taxonomy | blurrier | cleaner mapping |
-| Long-term extensibility | weaker | stronger |
+- run, project, and spec IDs
+- trainer image, command, entrypoint, and environment
+- assigned agent ID
+- assigned agent-local GPU index
+- agent-visible workspace, cache, artifact, log, and config paths
+- timeout and output expectations
 
-So the rule is simple:
-- **SDK drives the product path**
-- **CLI remains a human debugging path**
+It should not contain Docker SDK types, raw Docker container config, or manager-local filesystem assumptions.
 
-## The two-stage immutable plan
-A run should not jump straight from user spec to container execution.
-It should pass through two immutable objects.
+## Launch Is Not Observation
 
-### Stage 1: `ExecutionIntent`
-This is the logical plan.
-
-It says things like:
-- run ID,
-- preset,
-- image reference,
-- command and env intent,
-- logical mounts such as `workspace`, `artifacts`, `cache`,
-- logical resource request such as `gpu: 1`.
-
-What it does **not** include:
-- GPU index,
-- concrete host paths,
-- node or daemon endpoint,
-- Docker-specific types.
-
-### Stage 2: `ExecutionPlan`
-This is the bound plan.
-
-It says things like:
-- assigned GPU index,
-- selected node or daemon endpoint,
-- concrete host mount paths,
-- temp directories,
-- final runtime environment values,
-- final image ref and pull behavior.
-
-By the time the executor sees this object, all execution-critical values should already be fixed.
-
-## Why two plans matter
-If the executor starts deciding GPU indices or host paths, several things go wrong:
-- placement policy is no longer centralized,
-- deterministic replay becomes weaker,
-- multi-node support gets tangled into runtime code,
-- upper layers lose control over what was actually decided.
-
-That is why the architecture needs a hard rule:
-
-> **The scheduler decides. The executor materializes.**
-
-The executor should not be clever. It should be precise.
-
-## Layer boundaries
-| Layer | Knows Docker SDK? | Main job |
-|---|---|---|
-| Submit / Queue | No | validate request, produce logical intent |
-| Preset / Config | No | merge defaults, validate overrides, write resolved config |
-| Scheduler / Allocator | No | bind resources, node, paths, GPU |
-| Executor / Runtime adapter | Yes | translate bound plan into runtime calls |
-
-This keeps Docker details local instead of leaking upward into domain logic.
-
-## Runtime operations and state transitions
-A narrow runtime adapter can expose a small set of operations such as:
+The initial `WorkloadLauncher` port is intentionally small:
 
 ```go
-EnsureImage(ctx, plan)
-Create(ctx, plan)
-Start(ctx, handle)
-Wait(ctx, handle)
+type WorkloadLauncher interface {
+    Prepare(ctx context.Context, plan WorkloadPlan) (WorkloadRef, error)
+    Start(ctx context.Context, ref WorkloadRef) error
+    Cleanup(ctx context.Context, ref WorkloadRef) error
+}
 ```
 
-Those map naturally into the run state machine:
+There is no `Wait` method in this port. Launching and observing are different responsibilities.
 
-| Runtime operation | Likely phase | Example failure reason |
-|---|---|---|
-| `EnsureImage` | `preparing` | `image_pull_failed` |
-| `Create` | `preparing` | `container_create_failed` |
-| `Start` | `running` | `trainer_error` or startup failure |
-| `Wait` | `running` | `oom`, `timeout`, `trainer_error` |
+`Prepare` and `Start` trigger work. Terminal outcome belongs to the `ScheduleCoordinator` reconcile path, which can poll an agent status endpoint, map exit signals into `failure_reason`, release active capacity, and preserve artifacts.
 
-This is much easier to reason about than a single opaque shell command.
+## REST-First Manager-Agent Boundary
 
-## Concrete examples of boundary leaks
-### Bad move: executor picks a GPU index
-Why it is bad:
-- resource placement is now hidden in runtime code,
-- scheduler decisions are incomplete,
-- later multi-node support gets messy.
+The first manager-agent adapter is REST/HTTP because it is simple to operate and debug in the MVP. The common workload contract should remain transport-agnostic.
 
-Correct home: scheduler / allocator.
+Initial agent endpoints:
 
-### Bad move: executor invents host paths
-Why it is bad:
-- the bound plan no longer fully explains the run,
-- replay and debugging get weaker,
-- cache and volume policy become ad hoc.
+| Method | Path | Responsibility |
+|--------|------|----------------|
+| POST | `/v1/workloads/prepare` | Materialize a `WorkloadPlan` and return a `WorkloadRef`. |
+| POST | `/v1/workloads/{workload_ref}/start` | Start the prepared workload. |
+| POST | `/v1/workloads/{workload_ref}/cleanup` | Best-effort cleanup. |
+| GET | `/v1/workloads/{workload_ref}/status` | Return observed status, exit code, OOM/timeout signals, and failure detail. |
 
-Correct home: scheduler or storage planner.
+HTTP DTOs belong at the transport boundary. They should not leak into `internal/common/workload`.
 
-### Bad move: upper layers import Docker SDK types
-Why it is bad:
-- runtime concerns leak into business logic,
-- testing gets harder,
-- replacing the runtime adapter later becomes expensive.
+## GPU Assignment Rule
 
-Correct home: only inside the Docker adapter.
+For Phase 0, keep scheduling boring:
 
-## GPU assignment rule
-For MVP, keep it boring:
-- one container gets exactly one GPU,
-- the allocator chooses the index,
-- the executor only materializes that choice.
+- one container receives exactly one GPU,
+- `WorkloadProvisioner` chooses the agent-local GPU index,
+- `DockerWorkloadBackend` only materializes that choice,
+- active `(agent_id, gpu_index)` assignment is protected by repository state.
 
-This is intentionally narrow. It keeps scheduling decisions explicit and testable.
+This is enough for a single-node 2-GPU MVP and avoids introducing a distributed scheduler or external hint store too early.
 
-## Why this helps future phases
-A narrow adapter boundary is not only about cleanliness. It is about making later work land in the right place.
+## Key Takeaways
 
-### Phase 2: cancellation and cleanup
-Better cancel semantics, OOM detection, and orphan cleanup should improve the adapter, not force submit or preset layers to learn Docker internals.
-
-### Phase 3: multi-node
-If multi-node arrives later, the allocator can bind:
-- node,
-- daemon endpoint,
-- GPU index.
-
-The executor interface does not need to change much. It still receives a fully bound plan.
-
-### Phase 4: volume and cache policy
-If cache placement becomes smarter, that logic belongs in storage planning or allocation. The executor should still just materialize the selected paths and mounts.
-
-## Debugging checklist: where should this logic live?
-When adding a new piece of behavior, ask:
-
-1. Does this decide **what** should run?
-   - submit / preset layer
-2. Does this decide **where** or **with which resources** it should run?
-   - scheduler / allocator
-3. Does this translate a fully bound plan into runtime API calls?
-   - executor / adapter
-4. Does it require Docker-specific types?
-   - keep it inside the Docker adapter
-5. Can the same `ExecutionPlan` be replayed deterministically?
-   - if not, some resolution logic is living in the wrong place
-
-## Key takeaways
-- The system is automating a run state machine, not a shell command.
-- `ExecutionIntent` captures logical intent, and `ExecutionPlan` captures bound execution reality.
-- The scheduler should decide; the executor should materialize.
-- Docker belongs behind a narrow adapter boundary.
-- Good boundaries are what make multi-node, cache policy, and cleanup extensible later.
+- The system runs a state machine, not an opaque shell command.
+- `SpecBuilder` finalizes what should run.
+- `WorkloadProvisioner` binds where and with which resources it should run.
+- `WorkloadLauncher` triggers prepare/start/cleanup.
+- `ScheduleCoordinator` owns observation and finalization.
+- Docker-specific details belong inside `DockerWorkloadBackend`.

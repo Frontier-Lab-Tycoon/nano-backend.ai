@@ -16,11 +16,11 @@ Use `.claude/skills/README.md` for the available project workflows and skills.
 
 ## MVP Goals
 
-- Accept declarative run drafts built from `preset + overrides`
-- Validate presets and overrides before consuming queue or GPU capacity
+- Accept declarative run drafts built from preset refs and option parameters
+- Validate presets and option policies before consuming queue or GPU capacity
 - Persist every run in a local SQLite ledger
 - Execute at most two single-GPU runs concurrently
-- Keep Docker behind a narrow runtime adapter
+- Keep Docker behind an agent-side workload backend
 - Preserve logs, config, metrics, and artifacts for every terminal run
 - Make failures machine-readable through explicit run states and `failure_reason`
 
@@ -37,22 +37,25 @@ Long-running operations expose pollable resources. For Phase 0, logs use cursor-
 ```text
 RunDraft
   -> API preflight validation
-  -> preset registry / resolved config
+  -> preset registry / spec builder
   -> immutable spec.Spec
   -> SQLite run ledger
-  -> FIFO scheduler / GPU allocator
-  -> ExecutionIntent
-  -> ExecutionPlan
-  -> runtime adapter
+  -> ScheduleCoordinator
+  -> WorkloadProvisioner / GPU claim
+  -> WorkloadPlan
+  -> WorkloadLauncher
+  -> DockerWorkloadBackend
   -> local artifact store
 ```
 
 | Component | Role |
 |-----------|------|
 | HTTP API | Submit and inspect runs, logs, and artifacts |
-| Preset registry | Validate presets, allowed overrides, and defaults |
-| Scheduler / allocator | FIFO scheduling and 2-GPU assignment |
-| Runtime adapter | Materialize execution plans; Docker-specific code stays here |
+| Spec builder | Resolve preset refs, validate option parameters, and finalize immutable specs |
+| ScheduleCoordinator | Own run lifecycle transitions and terminal reconciliation |
+| WorkloadProvisioner | FIFO scheduling, 2-GPU assignment, and workload plan construction |
+| WorkloadLauncher | Manager-side port for prepare/start/cleanup calls |
+| DockerWorkloadBackend | Agent-side Docker container materialization and observation |
 | SQLite | Durable source of truth for projects, runs, and artifact metadata |
 | Local artifact store | Stores specs, resolved configs, logs, metrics, reports, adapters |
 
@@ -61,12 +64,12 @@ RunDraft
 - **Language:** Go
 - **External API:** HTTP + JSON REST
 - **Database:** SQLite for Phase 0
-- **Runtime substrate:** Docker adapter behind a Go interface
+- **Workload substrate:** Agent-side Docker backend behind REST/HTTP and a Go port
 - **Storage:** Local filesystem artifact store
 
 ## Future Architecture Notes
 
-Postgres, Redis, gRPC manager/agent separation, multi-node scheduling, and richer cancellation/orphan cleanup semantics are future architecture directions, not Phase 0 requirements.
+Postgres, Redis/Valkey hints, alternate manager-agent transports, multi-node scheduling, and richer cancellation/orphan cleanup semantics are future architecture directions, not Phase 0 requirements.
 
 ## Non-Goals (MVP)
 

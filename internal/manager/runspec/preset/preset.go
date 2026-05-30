@@ -8,7 +8,7 @@ import (
 // ID is the stable identity for a preset.
 type ID = commonpreset.ID
 
-// Preset is the resolved preset contract used by RunSpec processing.
+// Preset is the resolved preset contract used while building run specs.
 type Preset = commonpreset.Preset
 
 var (
@@ -27,7 +27,7 @@ type TrainerPreset struct {
 	Policy        OptionPolicy
 }
 
-// RuntimeSpec describes how a preset is materialized by a runtime adapter.
+// RuntimeSpec describes how a preset is materialized by a workload backend.
 type RuntimeSpec struct {
 	Image      string
 	Entrypoint []string
