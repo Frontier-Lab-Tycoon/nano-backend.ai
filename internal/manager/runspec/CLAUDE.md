@@ -5,7 +5,7 @@ This package owns manager-specific run spec preparation.
 ## Responsibilities
 
 - Own the manager-specific run spec preparation namespace.
-- Keep preset catalog behavior and processing workflow close, but in separate subpackages.
+- Keep preset catalog behavior and spec-building workflow close, but in separate subpackages.
 
 ## Constraints
 
@@ -17,4 +17,4 @@ This package owns manager-specific run spec preparation.
 ## Directory Index
 
 - `preset/` — manager-supported preset catalog, policies, and registry behavior.
-- `processor/` — resolves presets, validates draft input, and produces finalized specs.
+- `specbuilder/` — resolves presets, validates draft input, and builds finalized specs.
